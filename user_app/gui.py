@@ -312,10 +312,19 @@ class EmployeeApp(QWidget):
         self.sync_timer.start(60000)
 
     def _init_shift_check_timer(self):
-        self.shift_check_timer = QTimer(self)
-        self.shift_check_timer.timeout.connect(self._auto_check_shift_ended)
-        self.shift_check_timer.start(30000)  # каждые 30 сек
-        self._auto_check_shift_ended()
+        try:
+            logger.info("[TIMER_INIT] Инициализация shift_check_timer...")
+            self.shift_check_timer = QTimer(self)
+            logger.info("[TIMER_INIT] QTimer создан")
+            self.shift_check_timer.timeout.connect(self._auto_check_shift_ended)
+            logger.info("[TIMER_INIT] timeout сигнал подключён к _auto_check_shift_ended")
+            self.shift_check_timer.start(30000)  # каждые 30 сек
+            logger.info("[TIMER_INIT] Таймер запущен (30 секунд)")
+            logger.info(f"[TIMER_INIT] Таймер активен: {self.shift_check_timer.isActive()}")
+            self._auto_check_shift_ended()
+            logger.info("[TIMER_INIT] Первая проверка выполнена")
+        except Exception as e:
+            logger.error(f"[TIMER_INIT] Ошибка инициализации таймера: {e}", exc_info=True)
 
     def _is_session_finished_remote(self) -> bool:
         """
@@ -323,14 +332,18 @@ class EmployeeApp(QWidget):
         имеет статус 'finished' или 'kicked'.
         """
         try:
+            logger.debug(f"[REMOTE_CHECK] Проверка удалённого статуса для {self.email}, session={self.session_id}")
             api = get_sheets_api()
             if hasattr(api, "check_user_session_status"):
+                logger.debug(f"[REMOTE_CHECK] Вызов check_user_session_status...")
                 st = str(api.check_user_session_status(self.email, self.session_id)).strip().lower()
-                logger.debug(f"[ACTIVESESSIONS] status for {self.email}/{self.session_id}: {st}")
+                logger.info(f"[ACTIVESESSIONS] status for {self.email}/{self.session_id}: {st}")
                 if st in ("finished", "kicked"):
+                    logger.warning(f"[REMOTE_CHECK] ⚠️ Обнаружен статус '{st}' - сессия должна быть закрыта!")
                     return True
 
             if hasattr(api, "get_all_active_sessions"):
+                logger.debug(f"[REMOTE_CHECK] Вызов get_all_active_sessions (fallback)...")
                 sessions = api.get_all_active_sessions() or []
                 last_for_email = None
                 for s in sessions:
@@ -338,10 +351,14 @@ class EmployeeApp(QWidget):
                         last_for_email = s
                 if last_for_email:
                     st2 = str(last_for_email.get("Status", "")).strip().lower()
-                    logger.debug(f"[ACTIVESESSIONS] fallback status for {self.email}: {st2}")
-                    return st2 in ("finished", "kicked")
+                    logger.info(f"[ACTIVESESSIONS] fallback status for {self.email}: {st2}")
+                    if st2 in ("finished", "kicked"):
+                        logger.warning(f"[REMOTE_CHECK] ⚠️ Обнаружен статус '{st2}' (fallback) - сессия должна быть закрыта!")
+                        return st2 in ("finished", "kicked")
+
+            logger.debug(f"[REMOTE_CHECK] Статус активен (не kicked/finished)")
         except Exception as e:
-            logger.debug(f"_is_session_finished_remote error: {e}")
+            logger.error(f"[REMOTE_CHECK] ❌ Ошибка проверки удалённого статуса: {e}", exc_info=True)
         return False
 
     def _is_shift_ended(self) -> bool:
@@ -354,10 +371,14 @@ class EmployeeApp(QWidget):
 
     def _auto_check_shift_ended(self):
         """Периодическая проверка завершения смены"""
+        logger.info(f"[AUTO_CHECK] Вызван _auto_check_shift_ended для {self.email}, session={self.session_id}")
+
         if self.shift_ended:
+            logger.info(f"[AUTO_CHECK] Смена уже завершена, пропускаем проверку")
             return
 
         # 1) локальная проверка
+        logger.debug(f"[AUTO_CHECK] Проверка локального LOGOUT...")
         if self._is_shift_ended():
             self.shift_ended = True
             self.finish_btn.setEnabled(False)
@@ -368,11 +389,14 @@ class EmployeeApp(QWidget):
             return
 
         # 2) удалённая проверка ActiveSessions
+        logger.debug(f"[AUTO_CHECK] Проверка удалённого статуса (ActiveSessions)...")
         if self._is_session_finished_remote():
             logger.info(f"[AUTO_LOGOUT_DETECT] В ActiveSessions статус kicked/finished для {self.email}, session={self.session_id}")
             # ВАЖНО: вызываем force_logout_by_admin вместо ручной логики
             self.force_logout_by_admin()
             return
+
+        logger.debug(f"[AUTO_CHECK] Проверка завершена, статус активен")
 
     def _update_info_text(self):
         info_text = f"""
