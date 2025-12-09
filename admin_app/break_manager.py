@@ -357,13 +357,26 @@ class BreakManager:
         admin_email: str
     ) -> bool:
         """Назначает график пользователю"""
+        # Для Supabase используем прямой метод
+        if self._is_supabase:
+            try:
+                return self.sheets.assign_break_schedule_to_user(
+                    email=email,
+                    schedule_id=schedule_id,
+                    admin_email=admin_email
+                )
+            except Exception as e:
+                logger.error(f"Failed to assign schedule via Supabase: {e}")
+                return False
+
+        # Для Google Sheets используем старый метод
         try:
             # Проверяем существование графика
             schedule = self.get_schedule(schedule_id)
             if not schedule:
                 logger.error(f"Schedule {schedule_id} not found")
                 return False
-            
+
             ws = self.sheets.get_worksheet(self.ASSIGNMENTS_SHEET)
             
             # Проверяем, есть ли уже назначение

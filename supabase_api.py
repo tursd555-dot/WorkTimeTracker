@@ -746,38 +746,105 @@ class SupabaseAPI:
 
     def delete_break_schedule_by_name(self, schedule_name: str) -> bool:
         """
-        Удалить график перерывов по имени (для совместимости)
+        Удалить график перерывов по ID (для совместимости)
 
         Args:
-            schedule_name: Имя графика (содержит ID)
+            schedule_name: ID графика (UUID)
 
         Returns:
             True если успешно
         """
         try:
-            # Ищем график по имени (contains schedule_id)
+            # schedule_name на самом деле это schedule_id (UUID)
+            # Мягкое удаление
             response = self.client.table('break_schedules')\
-                .select('id')\
-                .ilike('name', f'%{schedule_name}%')\
+                .update({'is_active': False})\
+                .eq('id', schedule_name)\
                 .execute()
 
-            if not response.data:
+            if response.data:
+                logger.info(f"Break schedule soft-deleted: {schedule_name}")
+                return True
+            else:
                 logger.warning(f"Break schedule not found: {schedule_name}")
                 return False
 
-            schedule_id = response.data[0]['id']
+        except Exception as e:
+            logger.error(f"Failed to delete break schedule: {e}")
+            return False
 
-            # Мягкое удаление
-            self.client.table('break_schedules')\
-                .update({'is_active': False})\
-                .eq('id', schedule_id)\
+    def assign_break_schedule_to_user(
+        self,
+        email: str,
+        schedule_id: str,
+        admin_email: str
+    ) -> bool:
+        """
+        Назначить график перерывов пользователю
+
+        Args:
+            email: Email пользователя
+            schedule_id: ID графика (UUID)
+            admin_email: Email администратора
+
+        Returns:
+            True если успешно
+        """
+        try:
+            email_lower = (email or "").strip().lower()
+            if not email_lower or not schedule_id:
+                logger.warning("assign_break_schedule: empty email or schedule_id")
+                return False
+
+            # Получаем user_id
+            user_response = self.client.table('users')\
+                .select('id')\
+                .eq('email', email_lower)\
+                .eq('is_active', True)\
                 .execute()
 
-            logger.info(f"Break schedule soft-deleted: {schedule_name}")
+            if not user_response.data:
+                logger.warning(f"User not found: {email_lower}")
+                return False
+
+            user_id = user_response.data[0]['id']
+
+            # Проверяем существует ли график
+            schedule_response = self.client.table('break_schedules')\
+                .select('id')\
+                .eq('id', schedule_id)\
+                .eq('is_active', True)\
+                .execute()
+
+            if not schedule_response.data:
+                logger.warning(f"Break schedule not found: {schedule_id}")
+                return False
+
+            # Деактивируем старые назначения
+            self.client.table('user_break_assignments')\
+                .update({'is_active': False})\
+                .eq('email', email_lower)\
+                .eq('is_active', True)\
+                .execute()
+
+            # Создаём новое назначение
+            assignment_data = {
+                'user_id': user_id,
+                'email': email_lower,
+                'schedule_id': schedule_id,
+                'assigned_by': admin_email,
+                'is_active': True
+            }
+
+            self.client.table('user_break_assignments')\
+                .insert(assignment_data)\
+                .execute()
+
+            logger.info(f"Break schedule assigned: {email_lower} -> {schedule_id}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to delete break schedule: {e}")
+            logger.error(f"Failed to assign break schedule: {e}")
             return False
 
 
