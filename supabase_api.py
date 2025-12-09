@@ -414,6 +414,78 @@ class SupabaseAPI:
             logger.error(f"Failed to finish session: {e}")
             return False
 
+    def kick_active_session(
+        self,
+        email: str,
+        session_id: Optional[str] = None,
+        status: str = "kicked",
+        remote_cmd: str = "FORCE_LOGOUT",
+        logout_time: Optional[datetime] = None
+    ) -> bool:
+        """
+        Принудительно завершить активную сессию (kick)
+        Совместимо с sheets_api.kick_active_session
+
+        Args:
+            email: Email пользователя
+            session_id: ID сессии (опционально, если None - берется последняя активная)
+            status: Статус для установки (по умолчанию "kicked")
+            remote_cmd: Команда для клиента (не используется в Supabase, для совместимости)
+            logout_time: Время выхода (если None - текущее время)
+
+        Returns:
+            True если сессия была kicked, False если активных сессий не найдено
+        """
+        try:
+            email_lower = (email or "").strip().lower()
+            if not email_lower:
+                logger.warning("kick_active_session: empty email")
+                return False
+
+            # Формируем запрос для поиска активной сессии
+            query = self.client.table('work_sessions')\
+                .select('*')\
+                .eq('email', email_lower)\
+                .eq('status', 'active')\
+                .order('login_time', desc=True)
+
+            # Если указан session_id, фильтруем по нему
+            if session_id:
+                query = query.eq('session_id', session_id)
+
+            response = query.limit(1).execute()
+
+            if not response.data:
+                logger.warning(f"No active session found for {email_lower}")
+                return False
+
+            # Получаем session_id активной сессии
+            active_session = response.data[0]
+            found_session_id = active_session.get('session_id')
+
+            # Формируем данные для обновления
+            lt = logout_time.isoformat() if isinstance(logout_time, datetime) else \
+                 (logout_time or datetime.now(timezone.utc).isoformat())
+
+            data = {
+                'status': status,
+                'logout_time': lt,
+                'logout_type': 'forced'  # Используем logout_type вместо remote_command
+            }
+
+            # Обновляем сессию
+            self.client.table('work_sessions')\
+                .update(data)\
+                .eq('session_id', found_session_id)\
+                .execute()
+
+            logger.info(f"✅ Session kicked for {email_lower} (session_id: {found_session_id})")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to kick active session for {email}: {e}")
+            return False
+
     # ========================================================================
     # WORK LOG
     # ========================================================================
