@@ -211,7 +211,50 @@ class SupabaseAPI:
         except Exception as e:
             logger.error(f"Failed to upsert user {email}: {e}")
             raise
-    
+
+    def delete_user(self, email: str) -> bool:
+        """
+        Удалить пользователя (мягкое удаление - установка is_active = false)
+        Совместимо с sheets_api.delete_user
+
+        Returns:
+            True если пользователь найден и помечен как неактивный
+            False если пользователь не найден
+        """
+        try:
+            email_lower = (email or "").strip().lower()
+            if not email_lower:
+                logger.warning("delete_user: empty email")
+                return False
+
+            # Проверяем существует ли пользователь
+            response = self.client.table('users')\
+                .select('id, email')\
+                .eq('email', email_lower)\
+                .execute()
+
+            if not response.data:
+                logger.warning(f"delete_user: user not found: {email_lower}")
+                return False
+
+            # Мягкое удаление - устанавливаем is_active = false
+            update_data = {
+                'is_active': False,
+                'updated_at': datetime.now(timezone.utc).isoformat()
+            }
+
+            self.client.table('users')\
+                .update(update_data)\
+                .eq('email', email_lower)\
+                .execute()
+
+            logger.info(f"User soft-deleted: {email_lower}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to delete user {email}: {e}")
+            return False
+
     # ========================================================================
     # WORK SESSIONS
     # ========================================================================
