@@ -234,6 +234,83 @@ class SupabaseAPI:
         except:
             return []
 
+    def get_all_active_sessions(self) -> List[Dict]:
+        """
+        Получить все активные сессии
+        Совместимо с sheets_api.get_all_active_sessions
+        """
+        try:
+            # Получаем сессии с именем пользователя через JOIN
+            response = self.client.table('work_sessions')\
+                .select('*, users(name)')\
+                .eq('status', 'active')\
+                .execute()
+
+            # Преобразуем в формат совместимый с sheets_api
+            sessions = []
+            for row in response.data:
+                # Получаем имя пользователя из связанной таблицы
+                user_name = ''
+                if row.get('users') and isinstance(row['users'], dict):
+                    user_name = row['users'].get('name', '')
+
+                sessions.append({
+                    'Email': row.get('email', ''),
+                    'Name': user_name,
+                    'SessionID': row.get('session_id', ''),
+                    'LoginTime': row.get('login_time', ''),
+                    'Status': row.get('status', ''),
+                    'Comment': row.get('comment', '')
+                })
+
+            return sessions
+
+        except Exception as e:
+            logger.error(f"Failed to get all active sessions: {e}")
+            return []
+
+    def get_active_session(self, email: str) -> Optional[Dict[str, str]]:
+        """
+        Получить активную сессию для конкретного пользователя
+        Совместимо с sheets_api.get_active_session
+        """
+        try:
+            email_lower = (email or "").strip().lower()
+            if not email_lower:
+                return None
+
+            # Получаем сессию с именем пользователя через JOIN
+            response = self.client.table('work_sessions')\
+                .select('*, users(name)')\
+                .eq('email', email_lower)\
+                .eq('status', 'active')\
+                .order('login_time', desc=True)\
+                .limit(1)\
+                .execute()
+
+            if not response.data:
+                return None
+
+            row = response.data[0]
+
+            # Получаем имя пользователя из связанной таблицы
+            user_name = ''
+            if row.get('users') and isinstance(row['users'], dict):
+                user_name = row['users'].get('name', '')
+
+            return {
+                'Email': row.get('email', ''),
+                'Name': user_name,
+                'SessionID': row.get('session_id', ''),
+                'LoginTime': row.get('login_time', ''),
+                'Status': row.get('status', ''),
+                'Comment': row.get('comment', '')
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get active session for {email}: {e}")
+            return None
+
     def set_active_session(self, email: str, name: str, session_id: str, login_time: Optional[str] = None) -> bool:
         """
         Установить активную сессию
@@ -285,14 +362,23 @@ class SupabaseAPI:
             logger.error(f"Failed to check session status: {e}")
             return 'unknown'
 
-    def finish_active_session(self, email: str, session_id: str) -> bool:
+    def finish_active_session(
+        self,
+        email: str,
+        session_id: str,
+        logout_time: Optional[str] = None,
+        reason: str = "user_exit"
+    ) -> bool:
         """
         Завершить активную сессию
         Совместимо с sheets_api.finish_active_session
         """
         try:
+            lt = logout_time or datetime.now(timezone.utc).isoformat()
+
             data = {
-                'logout_time': datetime.now(timezone.utc).isoformat(),
+                'logout_time': lt,
+                'logout_type': reason,
                 'status': 'finished'
             }
 
@@ -302,7 +388,7 @@ class SupabaseAPI:
                 .eq('session_id', session_id)\
                 .execute()
 
-            logger.info(f"✅ Session finished for {email}")
+            logger.info(f"✅ Session finished for {email} (reason: {reason})")
             return True
 
         except Exception as e:
