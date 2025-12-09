@@ -1,0 +1,10 @@
+﻿__pycache__/
+*.pyc
+temp_credentials.json
+*.json
+!requirements.json
+.env
+*.log
+*.OLD
+*.bak
+backup_*.json

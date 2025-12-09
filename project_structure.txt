@@ -1,0 +1,117 @@
+WorkTimeTracker Project Structure (After Cleanup)
+═══════════════════════════════════════════════════════════════
+
+📦 WorkTimeTracker/  [53 production .py files]
+│
+├── 📂 admin_app/  [9 files] - Admin Dashboard
+│   ├── main_admin.py          (entry point)
+│   ├── gui_admin.py           (GUI framework)
+│   ├── break_manager.py       (break scheduling)
+│   ├── break_analytics_tab.py (analytics & reports)
+│   ├── break_schedule_dialog.py
+│   ├── notifications_panel.py
+│   ├── repo.py                (data repository)
+│   ├── schedule_parser.py
+│   └── audit_logger.py        (security audit)
+│
+├── 📂 user_app/  [11 files] - User Application
+│   ├── main.py                (entry point)
+│   ├── gui.py                 (main GUI)
+│   ├── login_window.py        (authentication)
+│   ├── db_local.py            (local SQLite operations)
+│   ├── db_migrations.py       (local schema updates)
+│   ├── session.py             (user session management)
+│   ├── signals.py             (Qt signals)
+│   ├── api.py                 (API client)
+│   ├── ui_helpers.py          (UI utilities)
+│   ├── break_info_widget.py   (break status widget)
+│   └── personal_rules.py      (user preferences)
+│
+├── 📂 telegram_bot/  [2 files] - Telegram Bot
+│   ├── main.py                (bot entry point)
+│   └── notifier.py            (notification sender)
+│
+├── 📂 sync/  [6 files] - Synchronization Engine
+│   ├── sync_queue_improved.py ✨ (batch sync, exponential backoff)
+│   ├── conflict_resolver.py   (automatic conflict resolution)
+│   ├── network.py             (network utilities)
+│   ├── notifications.py       (sync notifications)
+│   ├── service_alerts.py      (service health alerts)
+│   └── __init__.py
+│
+├── 📂 notifications/  [2 files] - Notification System
+│   ├── engine.py              (notification processing)
+│   └── rules_manager.py       (notification rules)
+│
+├── 📂 shared/  [4 files] - Shared Modules
+│   ├── break_notifications.py (break alerts)
+│   ├── break_status_integration.py
+│   ├── db/
+│   │   ├── encrypted_database.py (SQLCipher support)
+│   │   └── __init__.py
+│   └── __init__.py
+│
+├── 📂 migrations/  [4 SQL files] - Database Schema
+│   ├── 001_initial_schema.sql
+│   ├── 002_add_audit_log.sql
+│   ├── 003_optimize_indexes.sql
+│   └── 004_notifications_tables.sql
+│
+├── 📂 tools/  [5 files] - Setup & Maintenance Tools
+│   ├── wtt_setup.py           (initial setup wizard)
+│   ├── doctor.py              (health check)
+│   ├── sheets_bootstrap.py    (Google Sheets init)
+│   ├── tg_envcheck.py         (Telegram config check)
+│   └── tg_send.py             (test notifications)
+│
+├── 📂 credentials/  - Credentials Storage
+│   ├── service_account.json
+│   └── secret_creds/
+│       └── (encrypted files)
+│
+├── 📂 scripts/  [1 file] - Shell Scripts
+│   └── cleanup_credentials.sh
+│
+├── 📂 dev-tools/  [32 files] 🆕 - Development Utilities
+│   ├── diagnostic/  [14 files]
+│   │   └── (health checks, diagnostics)
+│   ├── fix/  [4 files]
+│   │   └── (repair scripts)
+│   ├── test/  [3 files]
+│   │   └── (test utilities)
+│   ├── build/  [7 files]
+│   │   └── (PyInstaller configs)
+│   └── (misc utilities)
+│
+└── 🔧 Core Modules  [9 files in root]
+    ├── config.py              ✨ (unified configuration)
+    ├── sheets_api.py          (Google Sheets client)
+    ├── telegram_api.py        (Telegram API wrapper)
+    ├── auto_sync.py           (auto-sync daemon)
+    ├── logging_setup.py       (logging configuration)
+    ├── db_migrations_improved.py (DB migration runner)
+    ├── bot_launcher.py        (bot startup)
+    ├── __init__.py
+    └── local_backup.db        (144 KB)
+
+═══════════════════════════════════════════════════════════════
+Statistics:
+  - Production files: 53 Python files
+  - Dev-tools files: 32 Python files
+  - Total size: 1.1 MB (compressed: 214 KB)
+  - Database: 144 KB SQLite
+═══════════════════════════════════════════════════════════════
+
+Key Features:
+  ✅ Batch synchronization (sync_queue_improved)
+  ✅ Conflict resolution (automatic)
+  ✅ Encrypted credentials
+  ✅ Audit logging
+  ✅ Offline-first architecture
+  ✅ Multi-user support (ready for 200 users)
+  ✅ Telegram notifications
+  ✅ Google Sheets integration
+  ✅ Break scheduling & analytics
+  ✅ Health monitoring
+
+Ready for: Stage 2 - Database Optimization 🚀

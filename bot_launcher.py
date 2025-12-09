@@ -1,0 +1,201 @@
+
+import sys
+import os
+import subprocess
+import threading
+from pathlib import Path
+from datetime import datetime
+from PyQt5.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QLabel, QPushButton, QTextEdit, QHBoxLayout
+)
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
+from PyQt5.QtGui import QTextCursor
+
+# === Настройки логирования ===
+LOG_DIR = Path(__file__).parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE = LOG_DIR / "bot_launcher.log"
+
+
+def write_to_logfile(message: str):
+    """Запись строки в лог-файл"""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}] {message}\n")
+
+
+class LogReaderThread(QThread):
+    """Фоновое чтение stdout/stderr бота"""
+    log_signal = pyqtSignal(str)
+    finished_signal = pyqtSignal(int)
+
+    def __init__(self, process: subprocess.Popen):
+        super().__init__()
+        self.process = process
+        self._running = True
+
+    def run(self):
+        if not self.process or not self.process.stdout:
+            return
+        try:
+            for line in self.process.stdout:
+                if not self._running:
+                    break
+                line = line.strip()
+                if line:
+                    self.log_signal.emit(line)
+                    write_to_logfile(line)
+            code = self.process.wait()
+            self.finished_signal.emit(code)
+        except Exception as e:
+            msg = f"⚠️ Ошибка чтения лога: {e}"
+            self.log_signal.emit(msg)
+            write_to_logfile(msg)
+
+    def stop(self):
+        self._running = False
+
+
+class BotLauncher(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("WorkTimeTracker Bot — Monitor")
+        self.resize(750, 450)
+        self.process = None
+        self.reader_thread = None
+        self._init_ui()
+        self._setup_timers()
+        self.start_bot(auto=True)  # автозапуск при открытии
+
+    # ---------- UI ----------
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+
+        self.status_label = QLabel("⏳ Инициализация...")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+
+        self.log_box = QTextEdit()
+        self.log_box.setReadOnly(True)
+        self.log_box.setStyleSheet(
+            "background-color: #111; color: #0f0; font-family: Consolas, monospace; font-size: 12px;"
+        )
+
+        btn_layout = QHBoxLayout()
+        self.btn_restart = QPushButton("🔄 Перезапустить")
+        self.btn_stop = QPushButton("🛑 Остановить")
+        self.btn_clear = QPushButton("🧹 Очистить лог")
+
+        btn_layout.addWidget(self.btn_restart)
+        btn_layout.addWidget(self.btn_stop)
+        btn_layout.addWidget(self.btn_clear)
+
+        layout.addWidget(self.status_label)
+        layout.addWidget(self.log_box)
+        layout.addLayout(btn_layout)
+
+        self.setLayout(layout)
+
+        # Привязка кнопок
+        self.btn_restart.clicked.connect(lambda: self.start_bot(auto=False))
+        self.btn_stop.clicked.connect(self.stop_bot)
+        self.btn_clear.clicked.connect(self.log_box.clear)
+
+    # ---------- Логика ----------
+    def _setup_timers(self):
+        self.timer = QTimer()
+        self.timer.timeout.connect(self._check_process)
+        self.timer.start(2000)
+
+    def _append_log(self, text: str):
+        cursor = self.log_box.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertText(text + "\n")
+        self.log_box.setTextCursor(cursor)
+        self.log_box.ensureCursorVisible()
+        write_to_logfile(text)
+
+    def start_bot(self, auto=False):
+        """Запуск Telegram-бота"""
+        if self.process:
+            self._append_log("⚠️ Бот уже запущен.")
+            return
+        try:
+            if auto:
+                self._append_log("🚀 Автозапуск Telegram-бота...")
+            else:
+                self._append_log("🔄 Перезапуск Telegram-бота...")
+
+            self.status_label.setText("🟡 Запуск бота...")
+            self.status_label.setStyleSheet("color: orange; font-weight: bold; font-size: 16px;")
+
+            bot_script = Path(__file__).parent / "telegram_bot" / "main.py"
+
+            # --- Исправление цикла: не запускаем сам exe ---
+            if getattr(sys, "frozen", False):
+                # если запущен exe — ищем системный python
+                py_exec = "python"
+            else:
+                # если запущен из исходников — используем текущий интерпретатор
+                py_exec = sys.executable
+
+            # важно: cwd = корень проекта, чтобы импортировался config.py
+            self.process = subprocess.Popen(
+                [py_exec, str(bot_script)],
+                cwd=str(Path(__file__).parent),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1
+            )
+
+            self.reader_thread = LogReaderThread(self.process)
+            self.reader_thread.log_signal.connect(self._append_log)
+            self.reader_thread.finished_signal.connect(self._on_bot_exit)
+            self.reader_thread.start()
+
+            self.status_label.setText("🟢 Бот запущен")
+            self.status_label.setStyleSheet("color: #00ff00; font-weight: bold; font-size: 16px;")
+            self._append_log("✅ Бот успешно запущен.")
+        except Exception as e:
+            msg = f"❌ Ошибка запуска: {e}"
+            self._append_log(msg)
+            self.status_label.setText("❌ Ошибка запуска")
+            self.status_label.setStyleSheet("color: red; font-weight: bold; font-size: 16px;")
+
+    def _on_bot_exit(self, code: int):
+        msg = f"⚠️ Бот завершил работу (код {code})."
+        self._append_log(msg)
+        self.status_label.setText("🔴 Бот остановлен")
+        self.status_label.setStyleSheet("color: red; font-weight: bold; font-size: 16px;")
+        self.process = None
+        self.reader_thread = None
+
+    def stop_bot(self):
+        if self.process:
+            self._append_log("🛑 Остановка бота...")
+            try:
+                self.process.terminate()
+                self.process.wait(timeout=5)
+            except Exception as e:
+                self._append_log(f"⚠️ Ошибка при остановке: {e}")
+            self.process = None
+            self.status_label.setText("🔴 Бот остановлен")
+            self.status_label.setStyleSheet("color: red; font-weight: bold; font-size: 16px;")
+        else:
+            self._append_log("⚠️ Бот не запущен.")
+
+    def _check_process(self):
+        if self.process and self.process.poll() is not None:
+            self._append_log("⚠️ Процесс бота завершился.")
+            self.status_label.setText("🔴 Бот завершился")
+            self.status_label.setStyleSheet("color: red; font-weight: bold; font-size: 16px;")
+            self.process = None
+            self.reader_thread = None
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    win = BotLauncher()
+    win.show()
+    sys.exit(app.exec_())
