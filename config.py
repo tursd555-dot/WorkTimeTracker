@@ -191,13 +191,16 @@ def get_local_db_paths():
     return DB_MAIN_PATH, DB_FALLBACK_PATH
 
 # ==================== Настройки Google Sheets ====================
+# ID таблицы Google Sheets
+SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", os.getenv("GOOGLE_SHEET_ID", ""))
+
 # Имя книги может использоваться в UI/логах; доступ к книге — по ID (через sheets_api)
-GOOGLE_SHEET_NAME = "WorkLog"
-USERS_SHEET = "Users"
-WORKLOG_SHEET = "WorkLog"
-ARCHIVE_SHEET = "Archive"
-ACTIVE_SESSIONS_SHEET = "ActiveSessions"
-SHIFT_CALENDAR_SHEET = ""  # опционально: 'ShiftCalendar' / 'График' если появится лист графика
+GOOGLE_SHEET_NAME = os.getenv("GOOGLE_SHEET_NAME", "WorkLog")
+USERS_SHEET = os.getenv("USERS_SHEET", "Users")
+WORKLOG_SHEET = os.getenv("WORKLOG_SHEET", os.getenv("WORKSHEET_NAME", "WorkLog"))
+ARCHIVE_SHEET = os.getenv("ARCHIVE_SHEET", "Archive")
+ACTIVE_SESSIONS_SHEET = os.getenv("ACTIVE_SESSIONS_SHEET", "ActiveSessions")
+SHIFT_CALENDAR_SHEET = os.getenv("SHIFT_CALENDAR_SHEET", "")  # опционально: 'ShiftCalendar' / 'График' если появится лист графика
 
 # Break management sheets (v20.3 - unified with AdminApp Dashboard)
 BREAK_SCHEDULES_SHEET = "BreakSchedules"
