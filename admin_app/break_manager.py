@@ -60,11 +60,12 @@ class BreakSchedule:
 
 class BreakManager:
     """Менеджер системы перерывов v2.0"""
-    
+
     def __init__(self, sheets_api):
         self.sheets = sheets_api
         self._cache: Dict[str, BreakSchedule] = {}
-        
+        self._is_supabase = self._check_is_supabase()
+
         # Импорт настроек
         try:
             from config import (
@@ -104,7 +105,11 @@ class BreakManager:
             self.SEVERITY_INFO = "INFO"
             self.SEVERITY_WARNING = "WARNING"
             self.SEVERITY_CRITICAL = "CRITICAL"
-    
+
+    def _check_is_supabase(self) -> bool:
+        """Проверяет является ли API Supabase"""
+        return hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table')
+
     # =================== УПРАВЛЕНИЕ ШАБЛОНАМИ ===================
     
     def create_schedule(
@@ -118,7 +123,7 @@ class BreakManager:
     ) -> bool:
         """
         Создаёт новый шаблон графика
-        
+
         Args:
             schedule_id: ID графика (например, "SHIFT_8H")
             name: Название (например, "График 5/2 (9-18)")
@@ -126,10 +131,25 @@ class BreakManager:
             shift_end: Конец смены "17:00"
             limits: [{"break_type": "Перерыв", "daily_count": 3, "time_minutes": 15}, ...]
             windows: [{"break_type": "Перерыв", "start": "10:00", "end": "12:00", "priority": 1}, ...]
-        
+
         Returns:
             True если успешно
         """
+        # Для Supabase используем прямой метод
+        if self._is_supabase:
+            try:
+                return self.sheets.create_break_schedule_simple(
+                    schedule_id=schedule_id,
+                    name=name,
+                    shift_start=shift_start,
+                    shift_end=shift_end,
+                    limits=limits
+                )
+            except Exception as e:
+                logger.error(f"Failed to create schedule via Supabase: {e}")
+                return False
+
+        # Для Google Sheets используем старый метод
         try:
             ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
             
@@ -247,6 +267,15 @@ class BreakManager:
     
     def list_schedules(self) -> List[Dict]:
         """Возвращает список всех шаблонов"""
+        # Для Supabase используем прямой метод
+        if self._is_supabase:
+            try:
+                return self.sheets.list_schedule_templates()
+            except Exception as e:
+                logger.error(f"Failed to list schedules via Supabase: {e}")
+                return []
+
+        # Для Google Sheets используем старый метод
         try:
             ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
             rows = self.sheets._read_table(ws)
@@ -274,6 +303,15 @@ class BreakManager:
     
     def delete_schedule(self, schedule_id: str) -> bool:
         """Удаляет шаблон графика"""
+        # Для Supabase используем прямой метод
+        if self._is_supabase:
+            try:
+                return self.sheets.delete_break_schedule_by_name(schedule_id)
+            except Exception as e:
+                logger.error(f"Failed to delete schedule via Supabase: {e}")
+                return False
+
+        # Для Google Sheets используем старый метод
         try:
             ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
             values = self.sheets._request_with_retry(ws.get_all_values)

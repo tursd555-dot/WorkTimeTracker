@@ -639,6 +639,169 @@ class SupabaseAPI:
         except:
             return []
 
+    # ========================================================================
+    # BREAK SCHEDULES / TEMPLATES
+    # ========================================================================
+
+    def list_schedule_templates(self) -> List[Dict[str, Any]]:
+        """
+        Получить список всех шаблонов графиков перерывов
+        Совместимо с break_manager.py
+
+        Returns:
+            List of dicts with keys: ScheduleID, Name, ShiftStart, ShiftEnd,
+            BreakType, TimeMinutes, WindowStart, WindowEnd, Priority
+        """
+        try:
+            # Получаем все графики с их лимитами
+            response = self.client.table('break_schedules')\
+                .select('*, break_limits(*)')\
+                .eq('is_active', True)\
+                .execute()
+
+            if not response.data:
+                return []
+
+            # Преобразуем в формат совместимый с Google Sheets
+            templates = []
+            for schedule in response.data:
+                schedule_id = str(schedule.get('id', ''))
+                name = schedule.get('name', '')
+                shift_start = str(schedule.get('shift_start', ''))
+                shift_end = str(schedule.get('shift_end', ''))
+
+                limits = schedule.get('break_limits', [])
+                if not limits:
+                    # Если нет лимитов, всё равно добавляем строку
+                    templates.append({
+                        'ScheduleID': schedule_id,
+                        'Name': name,
+                        'ShiftStart': shift_start,
+                        'ShiftEnd': shift_end,
+                        'BreakType': '',
+                        'TimeMinutes': '',
+                        'WindowStart': '',
+                        'WindowEnd': '',
+                        'Priority': ''
+                    })
+                else:
+                    # Для каждого лимита создаём строку
+                    for idx, limit in enumerate(limits, 1):
+                        templates.append({
+                            'ScheduleID': schedule_id,
+                            'Name': name,
+                            'ShiftStart': shift_start,
+                            'ShiftEnd': shift_end,
+                            'BreakType': limit.get('break_type', ''),
+                            'TimeMinutes': str(limit.get('duration_minutes', '')),
+                            'WindowStart': shift_start,  # По умолчанию весь день
+                            'WindowEnd': shift_end,
+                            'Priority': str(idx)
+                        })
+
+            return templates
+
+        except Exception as e:
+            logger.error(f"Failed to list schedule templates: {e}")
+            return []
+
+    def create_break_schedule_simple(
+        self,
+        schedule_id: str,
+        name: str,
+        shift_start: str,
+        shift_end: str,
+        limits: List[Dict[str, Any]]
+    ) -> bool:
+        """
+        Создать график перерывов (упрощённая версия)
+
+        Args:
+            schedule_id: ID графика (будет использован как name если уникально)
+            name: Название графика
+            shift_start: Начало смены "09:00"
+            shift_end: Конец смены "17:00"
+            limits: [{"break_type": "Перерыв", "daily_count": 3, "time_minutes": 15}, ...]
+
+        Returns:
+            True если успешно
+        """
+        try:
+            # Создаём график
+            schedule_data = {
+                'name': f"{schedule_id} - {name}",  # Комбинируем ID и имя
+                'description': name,
+                'shift_start': shift_start,
+                'shift_end': shift_end,
+                'is_active': True
+            }
+
+            schedule_response = self.client.table('break_schedules')\
+                .insert(schedule_data)\
+                .execute()
+
+            if not schedule_response.data:
+                logger.error("Failed to create break schedule")
+                return False
+
+            created_schedule_id = schedule_response.data[0]['id']
+
+            # Создаём лимиты
+            for limit in limits:
+                limit_data = {
+                    'schedule_id': created_schedule_id,
+                    'break_type': limit.get('break_type', 'Перерыв'),
+                    'duration_minutes': int(limit.get('time_minutes', 15)),
+                    'daily_count': int(limit.get('daily_count', 1))
+                }
+
+                self.client.table('break_limits')\
+                    .insert(limit_data)\
+                    .execute()
+
+            logger.info(f"Break schedule created: {schedule_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to create break schedule: {e}")
+            return False
+
+    def delete_break_schedule_by_name(self, schedule_name: str) -> bool:
+        """
+        Удалить график перерывов по имени (для совместимости)
+
+        Args:
+            schedule_name: Имя графика (содержит ID)
+
+        Returns:
+            True если успешно
+        """
+        try:
+            # Ищем график по имени (contains schedule_id)
+            response = self.client.table('break_schedules')\
+                .select('id')\
+                .ilike('name', f'%{schedule_name}%')\
+                .execute()
+
+            if not response.data:
+                logger.warning(f"Break schedule not found: {schedule_name}")
+                return False
+
+            schedule_id = response.data[0]['id']
+
+            # Мягкое удаление
+            self.client.table('break_schedules')\
+                .update({'is_active': False})\
+                .eq('id', schedule_id)\
+                .execute()
+
+            logger.info(f"Break schedule soft-deleted: {schedule_name}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to delete break schedule: {e}")
+            return False
+
 
 # ============================================================================
 # SINGLETON
