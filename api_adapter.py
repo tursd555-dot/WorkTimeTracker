@@ -8,6 +8,20 @@ import logging
 logger = logging.getLogger(__name__)
 
 # ============================================================================
+# EXCEPTION CLASSES
+# ============================================================================
+
+class SheetsAPIError(Exception):
+    """
+    Базовое исключение для API ошибок
+    Совместимо с sheets_api.SheetsAPIError
+    """
+    def __init__(self, message: str, is_retryable: bool = False, details: str = None):
+        super().__init__(message)
+        self.is_retryable = is_retryable
+        self.details = details
+
+# ============================================================================
 # КОНФИГУРАЦИЯ
 # ============================================================================
 
@@ -54,16 +68,22 @@ if USE_BACKEND == "supabase":
 
 if USE_BACKEND == "sheets":
     logger.info("📊 Using Google Sheets backend")
-    
+
     from sheets_api import SheetsAPI, get_sheets_api
-    
+    # Переопределяем SheetsAPIError из sheets_api если нужно
+    try:
+        from sheets_api import SheetsAPIError as _SheetsAPIError
+        SheetsAPIError = _SheetsAPIError
+    except ImportError:
+        pass  # Используем определенный выше
+
     logger.info("✅ Google Sheets API loaded")
 
 # ============================================================================
 # EXPORT
 # ============================================================================
 
-__all__ = ["get_sheets_api", "SheetsAPI", "USE_BACKEND"]
+__all__ = ["get_sheets_api", "SheetsAPI", "SheetsAPIError", "USE_BACKEND"]
 
 
 if __name__ == "__main__":

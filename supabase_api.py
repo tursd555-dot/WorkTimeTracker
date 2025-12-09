@@ -17,7 +17,26 @@ except ImportError:
     SUPABASE_AVAILABLE = False
     logger.error("supabase library not installed")
 
-__all__ = ["SupabaseAPI", "get_supabase_api"]
+
+# ============================================================================
+# EXCEPTION CLASSES
+# ============================================================================
+
+class SupabaseAPIError(Exception):
+    """
+    Исключение для Supabase API ошибок
+    Совместимо с SheetsAPIError
+    """
+    def __init__(self, message: str, is_retryable: bool = False, details: str = None):
+        super().__init__(message)
+        self.is_retryable = is_retryable
+        self.details = details
+
+
+# Алиас для совместимости
+SheetsAPIError = SupabaseAPIError
+
+__all__ = ["SupabaseAPI", "SupabaseAPIError", "SheetsAPIError", "get_supabase_api"]
 
 
 @dataclass
