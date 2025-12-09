@@ -15,31 +15,6 @@ from pathlib import Path
 from typing import Dict, Generator, List, Optional, Set, Union
 
 import pyzipper
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-# ============================================================================
-# ПЕРЕКЛЮЧЕНИЕ НА SUPABASE (v20.5)
-# ============================================================================
-USE_SUPABASE = True  # True = Supabase, False = Google Sheets
-
-if USE_SUPABASE:
-    import os
-    
-    # Настройка переменных окружения для Supabase
-    os.environ.setdefault("SUPABASE_URL", "https://jtgaobxbwibjcvasefzi.supabase.co")
-    os.environ.setdefault("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp0Z2FvYnhid2liamN2YXNlZnppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUyNTc2OTYsImV4cCI6MjA4MDgzMzY5Nn0.77rTr_FlXfDA8IpwW-deJGJF9nU9oUAufKv5BTGbApk")  # Замените!
-    
-    # Импортируем Supabase API вместо Sheets API
-    from supabase_api import get_supabase_api
-    
-    # Создаем алиас для совместимости
-    def get_sheets_api():
-        return get_supabase_api()
-    
-    SheetsAPI = type('SheetsAPI', (), {'__init__': lambda self: get_supabase_api()})
-
-print(f"✅ Использование: {'Supabase' if USE_SUPABASE else 'Google Sheets'}")
-# ============================================================================
 
 # ==================== Загрузка переменных окружения из .env ====================
 from dotenv import load_dotenv
@@ -64,6 +39,30 @@ def _load_env() -> None:
     load_dotenv()
 
 _load_env()
+
+# ============================================================================
+# ПЕРЕКЛЮЧЕНИЕ НА SUPABASE (v20.5)
+# ============================================================================
+USE_SUPABASE = True  # True = Supabase, False = Google Sheets
+
+if USE_SUPABASE:
+    import os
+
+    # Настройка переменных окружения для Supabase (fallback значения)
+    os.environ.setdefault("SUPABASE_URL", "https://jtgaobxbwibjcvasefzi.supabase.co")
+    os.environ.setdefault("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp0Z2FvYnhid2liamN2YXNlZnppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUyNTc2OTYsImV4cCI6MjA4MDgzMzY5Nn0.77rTr_FlXfDA8IpwW-deJGJF9nU9oUAufKv5BTGbApk")
+
+    # Импортируем Supabase API вместо Sheets API
+    from supabase_api import get_supabase_api
+
+    # Создаем алиас для совместимости
+    def get_sheets_api():
+        return get_supabase_api()
+
+    SheetsAPI = type('SheetsAPI', (), {'__init__': lambda self: get_supabase_api()})
+
+print(f"✅ Использование: {'Supabase' if USE_SUPABASE else 'Google Sheets'}")
+# ============================================================================
 
 # ==================== Импорт для работы с зашифрованным credentials ====================
 import tempfile
@@ -91,19 +90,21 @@ CREDENTIALS_ZIP = BASE_DIR / CREDENTIALS_ZIP_NAME
 CREDENTIALS_ZIP_PASSWORD = os.getenv("CREDENTIALS_ZIP_PASSWORD", "")
 GOOGLE_CREDENTIALS_FILE_ENV = (os.getenv("GOOGLE_CREDENTIALS_FILE") or "").strip()
 
-# Детектируем режимы
+# Детектируем режимы (только для Google Sheets режима)
 USE_ZIP = bool(CREDENTIALS_ZIP.exists() and CREDENTIALS_ZIP_PASSWORD)
 USE_JSON_DIRECT = bool(GOOGLE_CREDENTIALS_FILE_ENV and not USE_ZIP)
 
-if USE_ZIP:
-    CREDENTIALS_ZIP_PASSWORD = CREDENTIALS_ZIP_PASSWORD.encode("utf-8")
-elif not USE_JSON_DIRECT:
-    # Ни ZIP+пароля, ни JSON-пути
-    raise RuntimeError(
-        "Учетные данные не найдены. Положи зашифрованный архив рядом с EXE "
-        f"({CREDENTIALS_ZIP_NAME}) и укажи CREDENTIALS_ZIP_PASSWORD в .env, "
-        "или укажи GOOGLE_CREDENTIALS_FILE."
-    )
+# Проверяем Google credentials только если не используем Supabase
+if not USE_SUPABASE:
+    if USE_ZIP:
+        CREDENTIALS_ZIP_PASSWORD = CREDENTIALS_ZIP_PASSWORD.encode("utf-8")
+    elif not USE_JSON_DIRECT:
+        # Ни ZIP+пароля, ни JSON-пути
+        raise RuntimeError(
+            "Учетные данные не найдены. Положи зашифрованный архив рядом с EXE "
+            f"({CREDENTIALS_ZIP_NAME}) и укажи CREDENTIALS_ZIP_PASSWORD в .env, "
+            "или укажи GOOGLE_CREDENTIALS_FILE."
+        )
 
 # --- Ленивая загрузка credentials ---
 _CRED_MEMORY: Dict[int, tuple] = {}
@@ -114,10 +115,12 @@ def _derive_key(password: str) -> bytes:
     return hashlib.pbkdf2_hmac('sha256', password.encode(), b'stable salt', 100_000, 32)
 
 def _decrypt(data: bytes, key: bytes) -> bytes:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     nonce, ct = data[:12], data[12:]
     return AESGCM(key).decrypt(nonce, ct, b"")
 
 def _encrypt(data: bytes, key: bytes) -> bytes:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     import os
     nonce = os.urandom(12)
     return nonce + AESGCM(key).encrypt(nonce, data, b"")
@@ -337,27 +340,35 @@ SERVICE_ALERT_MIN_SECONDS: int = _int_env("SERVICE_ALERT_MIN_SECONDS", 900)     
 def validate_config() -> None:
     """Проверяет корректность конфигурации при запуске."""
     errors = []
-    
-    # Проверяем наличие credentials в одном из режимов
-    try:
-        with credentials_path() as creds_file:
-            if not creds_file.exists():
-                errors.append(f"Файл учетных данных не найден: {creds_file}")
-    except Exception as e:
-        errors.append(f"Ошибка доступа к учетным данным: {e}")
 
-    # Проверим выбранную стратегию
-    if USE_ZIP:
-        if not CREDENTIALS_ZIP.exists():
-            errors.append(f"Архив с ключом не найден: {CREDENTIALS_ZIP}")
-        if not CREDENTIALS_ZIP_PASSWORD:
-            errors.append("CREDENTIALS_ZIP_PASSWORD не задан в .env")
-    elif not USE_JSON_DIRECT:
-        errors.append(
-            "Ни ZIP+пароль, ни GOOGLE_CREDENTIALS_FILE не заданы. "
-            "Ожидается архив рядом с EXE и CREDENTIALS_ZIP_PASSWORD в .env, "
-            "или переменная GOOGLE_CREDENTIALS_FILE."
-        )
+    # Проверяем credentials в зависимости от режима
+    if USE_SUPABASE:
+        # Для Supabase проверяем наличие URL и KEY
+        if not os.getenv("SUPABASE_URL"):
+            errors.append("SUPABASE_URL не задан в переменных окружения")
+        if not os.getenv("SUPABASE_KEY"):
+            errors.append("SUPABASE_KEY не задан в переменных окружения")
+    else:
+        # Для Google Sheets проверяем наличие credentials
+        try:
+            with credentials_path() as creds_file:
+                if not creds_file.exists():
+                    errors.append(f"Файл учетных данных не найден: {creds_file}")
+        except Exception as e:
+            errors.append(f"Ошибка доступа к учетным данным: {e}")
+
+        # Проверим выбранную стратегию
+        if USE_ZIP:
+            if not CREDENTIALS_ZIP.exists():
+                errors.append(f"Архив с ключом не найден: {CREDENTIALS_ZIP}")
+            if not CREDENTIALS_ZIP_PASSWORD:
+                errors.append("CREDENTIALS_ZIP_PASSWORD не задан в .env")
+        elif not USE_JSON_DIRECT:
+            errors.append(
+                "Ни ZIP+пароль, ни GOOGLE_CREDENTIALS_FILE не заданы. "
+                "Ожидается архив рядом с EXE и CREDENTIALS_ZIP_PASSWORD в .env, "
+                "или переменная GOOGLE_CREDENTIALS_FILE."
+            )
     
     if not LOG_DIR.exists():
         try:
