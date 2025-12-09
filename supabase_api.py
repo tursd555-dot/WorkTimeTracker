@@ -646,58 +646,36 @@ class SupabaseAPI:
     def list_schedule_templates(self) -> List[Dict[str, Any]]:
         """
         Получить список всех шаблонов графиков перерывов
-        Совместимо с break_manager.py
+        Совместимо с break_manager.list_schedules()
 
         Returns:
-            List of dicts with keys: ScheduleID, Name, ShiftStart, ShiftEnd,
-            BreakType, TimeMinutes, WindowStart, WindowEnd, Priority
+            List of dicts with keys: schedule_id, name, shift_start, shift_end
+            (deduplicated by schedule_id)
         """
         try:
-            # Получаем все графики с их лимитами
+            # Получаем все графики
             response = self.client.table('break_schedules')\
-                .select('*, break_limits(*)')\
+                .select('id, name, description, shift_start, shift_end')\
                 .eq('is_active', True)\
                 .execute()
 
             if not response.data:
                 return []
 
-            # Преобразуем в формат совместимый с Google Sheets
+            # Преобразуем в формат совместимый с break_manager
             templates = []
             for schedule in response.data:
                 schedule_id = str(schedule.get('id', ''))
-                name = schedule.get('name', '')
+                name = schedule.get('name', '') or schedule.get('description', '')
                 shift_start = str(schedule.get('shift_start', ''))
                 shift_end = str(schedule.get('shift_end', ''))
 
-                limits = schedule.get('break_limits', [])
-                if not limits:
-                    # Если нет лимитов, всё равно добавляем строку
-                    templates.append({
-                        'ScheduleID': schedule_id,
-                        'Name': name,
-                        'ShiftStart': shift_start,
-                        'ShiftEnd': shift_end,
-                        'BreakType': '',
-                        'TimeMinutes': '',
-                        'WindowStart': '',
-                        'WindowEnd': '',
-                        'Priority': ''
-                    })
-                else:
-                    # Для каждого лимита создаём строку
-                    for idx, limit in enumerate(limits, 1):
-                        templates.append({
-                            'ScheduleID': schedule_id,
-                            'Name': name,
-                            'ShiftStart': shift_start,
-                            'ShiftEnd': shift_end,
-                            'BreakType': limit.get('break_type', ''),
-                            'TimeMinutes': str(limit.get('duration_minutes', '')),
-                            'WindowStart': shift_start,  # По умолчанию весь день
-                            'WindowEnd': shift_end,
-                            'Priority': str(idx)
-                        })
+                templates.append({
+                    'schedule_id': schedule_id,
+                    'name': name,
+                    'shift_start': shift_start,
+                    'shift_end': shift_end
+                })
 
             return templates
 
