@@ -44,10 +44,10 @@ class UserAPI:
 
     def force_logout_if_needed(self, email: str, session_id: str) -> bool:
         """
-        Пулинг статуса: если админ принудительно разлогинил (Status=kicked) — вернём True.
+        Пулинг статуса: если админ принудительно разлогинил (Status=kicked/completed/finished/forced_logout) — вернём True.
         """
         st = self.sheets.check_user_session_status(email=email, session_id=session_id)
-        return st in ("kicked", "finished")
+        return st in ("kicked", "finished", "completed", "forced_logout")
 
     # ---- WorkLog ----
     def log_actions(self, actions: List[Dict], email: str, user_group: Optional[str] = None) -> bool:

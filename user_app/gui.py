@@ -329,7 +329,7 @@ class EmployeeApp(QWidget):
     def _is_session_finished_remote(self) -> bool:
         """
         True — если в ActiveSessions текущая (или последняя по email) сессия
-        имеет статус 'finished' или 'kicked'.
+        имеет статус 'finished', 'kicked', 'completed' или 'forced_logout'.
         """
         try:
             logger.debug(f"[REMOTE_CHECK] Проверка удалённого статуса для {self.email}, session={self.session_id}")
@@ -338,7 +338,7 @@ class EmployeeApp(QWidget):
                 logger.debug(f"[REMOTE_CHECK] Вызов check_user_session_status...")
                 st = str(api.check_user_session_status(self.email, self.session_id)).strip().lower()
                 logger.info(f"[ACTIVESESSIONS] status for {self.email}/{self.session_id}: {st}")
-                if st in ("finished", "kicked"):
+                if st in ("finished", "kicked", "completed", "forced_logout"):
                     logger.warning(f"[REMOTE_CHECK] ⚠️ Обнаружен статус '{st}' - сессия должна быть закрыта!")
                     return True
 
@@ -352,11 +352,11 @@ class EmployeeApp(QWidget):
                 if last_for_email:
                     st2 = str(last_for_email.get("Status", "")).strip().lower()
                     logger.info(f"[ACTIVESESSIONS] fallback status for {self.email}: {st2}")
-                    if st2 in ("finished", "kicked"):
+                    if st2 in ("finished", "kicked", "completed", "forced_logout"):
                         logger.warning(f"[REMOTE_CHECK] ⚠️ Обнаружен статус '{st2}' (fallback) - сессия должна быть закрыта!")
-                        return st2 in ("finished", "kicked")
+                        return True
 
-            logger.debug(f"[REMOTE_CHECK] Статус активен (не kicked/finished)")
+            logger.debug(f"[REMOTE_CHECK] Статус активен (не finished/kicked/completed/forced_logout)")
         except Exception as e:
             logger.error(f"[REMOTE_CHECK] ❌ Ошибка проверки удалённого статуса: {e}", exc_info=True)
         return False
