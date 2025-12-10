@@ -532,7 +532,7 @@ class SupabaseAPI:
                 'status': 'active',
             }
 
-            self.client.table('active_sessions').insert(data).execute()
+            self.client.table('work_sessions').insert(data).execute()
             return True
 
         except Exception as e:
@@ -551,10 +551,9 @@ class SupabaseAPI:
             data = {
                 'status': 'finished',
                 'logout_time': logout_time or datetime.now(timezone.utc).isoformat(),
-                'logout_reason': reason,
             }
 
-            self.client.table('active_sessions')\
+            self.client.table('work_sessions')\
                 .update(data)\
                 .eq('email', email.strip().lower())\
                 .eq('session_id', session_id)\
