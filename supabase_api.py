@@ -320,6 +320,23 @@ class SupabaseAPI:
                 if i < len(columns):
                     data[columns[i]] = value
 
+            # Для таблиц с user_id - получаем ID пользователя по email
+            if table_name in ['break_log', 'work_log', 'violations'] and 'email' in data:
+                email = data.get('email', '').strip().lower()
+                if email:
+                    try:
+                        user_response = self.client.table('users')\
+                            .select('id')\
+                            .eq('email', email)\
+                            .execute()
+
+                        if user_response.data:
+                            data['user_id'] = user_response.data[0]['id']
+                            logger.debug(f"Added user_id for email {email}")
+                    except Exception as e:
+                        logger.warning(f"Failed to get user_id for {email}: {e}")
+                        # Продолжаем без user_id (будет NULL)
+
             # Вставляем данные
             self.client.table(table_name).insert(data).execute()
             logger.debug(f"Appended row to {table_name}: {data}")

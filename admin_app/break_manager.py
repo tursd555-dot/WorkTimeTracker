@@ -503,8 +503,10 @@ class BreakManager:
             # 1. Получить график пользователя
             schedule = self.get_user_schedule(email)
             if not schedule:
-                # v20.3.4: Используем дефолтные лимиты если графика нет
-                logger.warning(f"No schedule for {email}, using default limits")
+                # v20.3.4: Разрешаем перерыв даже без графика, но логируем нарушение
+                logger.warning(f"No schedule for {email}, allowing break but logging violation")
+
+                # Создаем дефолтный лимит для записи
                 from dataclasses import dataclass
                 @dataclass
                 class DefaultLimit:
@@ -514,13 +516,25 @@ class BreakManager:
                 @dataclass
                 class DefaultSchedule:
                     limits: list
-                    windows: list = None
+                    windows: list
+
                 # Дефолтные лимиты: 3 перерыва по 15 мин, 1 обед 60 мин
-                schedule = DefaultSchedule(limits=[
-                    DefaultLimit("Перерыв", 15, 3),
-                    DefaultLimit("Обед", 60, 1)
-                ])
-                return False, "У вас нет назначенного графика перерывов"
+                schedule = DefaultSchedule(
+                    limits=[
+                        DefaultLimit("Перерыв", 15, 3),
+                        DefaultLimit("Обед", 60, 1)
+                    ],
+                    windows=[]
+                )
+
+                # Логируем нарушение - нет назначенного графика
+                self._log_violation(
+                    email=email,
+                    session_id=session_id,
+                    violation_type="NO_SCHEDULE",
+                    severity=self.SEVERITY_WARNING,
+                    details="Перерыв взят без назначенного графика"
+                )
             
             # 2. Найти лимит для этого типа
             limit = next((l for l in schedule.limits if l.break_type == break_type), None)
@@ -802,16 +816,16 @@ class BreakManager:
             except:
                 name = ''
             
-            # Формат BreakLog (v20.3): Email, Name, BreakType, StartTime, EndTime, Duration, Date, Status
+            # Формат BreakLog (v20.3): Email, Name, BreakType, StartTime, EndTime, Date, Status, SessionID
             row = [
                 email,
                 name,
                 break_type,
                 start_time.strftime("%Y-%m-%d %H:%M:%S"),
                 "",  # EndTime (заполнится при завершении)
-                "",  # Duration (заполнится при завершении)
                 start_time.strftime("%Y-%m-%d"),  # Date
-                "Active"  # Status
+                "Active",  # Status
+                session_id or ""  # SessionID
             ]
             
             self.sheets._request_with_retry(lambda: ws.append_row(row))
