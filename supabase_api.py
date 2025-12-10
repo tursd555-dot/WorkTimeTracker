@@ -32,19 +32,49 @@ class SupabaseConfig:
     """Конфигурация Supabase"""
     url: str
     key: str
-    
+
     @classmethod
     def from_env(cls):
         """Загрузка из переменных окружения"""
         url = os.getenv("SUPABASE_URL")
         key = os.getenv("SUPABASE_KEY")
-        
+
         if not url or not key:
             raise ValueError(
                 "SUPABASE_URL and SUPABASE_KEY must be set in environment variables"
             )
-        
+
         return cls(url=url, key=key)
+
+
+class SupabaseClientWrapper:
+    """Обёртка для Supabase Client для совместимости с Google Sheets API"""
+
+    def __init__(self, supabase_client):
+        self._client = supabase_client
+
+    def open(self, spreadsheet_name: str):
+        """Заглушка для совместимости с gspread.client.open()"""
+        logger.debug(f"client.open() called for {spreadsheet_name} - Supabase doesn't use spreadsheets")
+        return self  # Возвращаем себя для цепочки вызовов
+
+    def worksheets(self):
+        """Заглушка для совместимости"""
+        return []
+
+    def worksheet(self, name: str):
+        """Заглушка для совместимости"""
+        logger.debug(f"client.worksheet() called for {name} - not supported in Supabase")
+        return None
+
+    def add_worksheet(self, **kwargs):
+        """Заглушка для совместимости"""
+        logger.debug("client.add_worksheet() not supported in Supabase")
+        return None
+
+    def __getattr__(self, name):
+        """Проксируем все остальные атрибуты к реальному Supabase client"""
+        return getattr(self._client, name)
 
 
 class SupabaseAPI:
@@ -52,15 +82,18 @@ class SupabaseAPI:
     API для работы с Supabase
     Совместимый интерфейс с SheetsAPI
     """
-    
+
     def __init__(self, config: Optional[SupabaseConfig] = None):
         """Инициализация"""
         if not SUPABASE_AVAILABLE:
             raise ImportError("supabase library not installed")
-        
+
         self.config = config or SupabaseConfig.from_env()
-        self.client: Client = create_client(self.config.url, self.config.key)
-        
+        real_client = create_client(self.config.url, self.config.key)
+
+        # Оборачиваем клиент для совместимости
+        self.client = SupabaseClientWrapper(real_client)
+
         logger.info(f"✅ Supabase API initialized: {self.config.url}")
     
     # ========================================================================
