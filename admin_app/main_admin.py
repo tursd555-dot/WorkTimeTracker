@@ -36,7 +36,7 @@ from admin_app.repo import AdminRepo
 from admin_app.notifications_panel import open_panel as open_notifications_panel
 
 # --- Менеджер перерывов ---
-from admin_app.break_manager import BreakManager
+from api_adapter import get_break_manager
 from admin_app.break_analytics_tab import BreakAnalyticsTab
 
 # Инициализация логирования до запуска GUI (совместимо и со старой сигнатурой)
@@ -141,7 +141,7 @@ class AdminWindow(QMainWindow):
         self.repo = AdminRepo()
 
         # Менеджер перерывов
-        self.break_mgr = BreakManager(self.repo.sheets)
+        self.break_mgr = get_break_manager()
 
         # Кэш пользователей и активных e-mail
         self.users: List[Dict[str, str]] = []

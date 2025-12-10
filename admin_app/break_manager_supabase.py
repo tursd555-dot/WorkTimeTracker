@@ -60,6 +60,7 @@ class BreakManagerSupabase:
             api: SupabaseAPI instance
         """
         self.api = api
+        self.sheets = api  # Совместимость с break_analytics_tab и другими модулями
         self._cache: Dict[str, BreakSchedule] = {}
 
         # Импорт настроек
@@ -596,6 +597,78 @@ class BreakManagerSupabase:
     def assign_schedule_to_user(self, email: str, schedule_id: str, admin_email: Optional[str] = None) -> bool:
         """Алиас для assign_schedule()"""
         return self.assign_schedule(email, schedule_id, admin_email or "admin@system")
+
+    def create_schedule_template(
+        self,
+        schedule_id: str,
+        name: str,
+        shift_start: str,
+        shift_end: str,
+        slots_data: List[Dict]
+    ) -> bool:
+        """
+        Создаёт шаблон графика (обратная совместимость с Google Sheets версией)
+
+        Преобразует старый формат slots_data в новый формат limits
+        """
+        try:
+            # Группируем слоты по типу для создания лимитов
+            limits_dict = {}
+
+            for slot in slots_data:
+                slot_type = slot.get('slot_type', 'Перерыв')
+                duration = slot.get('duration', 15)
+
+                if slot_type not in limits_dict:
+                    limits_dict[slot_type] = {
+                        'break_type': slot_type,
+                        'daily_count': 0,
+                        'time_minutes': duration
+                    }
+                limits_dict[slot_type]['daily_count'] += 1
+
+            limits = list(limits_dict.values())
+
+            return self.create_schedule(
+                schedule_id=schedule_id,
+                name=name,
+                shift_start=shift_start,
+                shift_end=shift_end,
+                limits=limits
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to create schedule template: {e}", exc_info=True)
+            return False
+
+    def update_schedule_template(
+        self,
+        schedule_id: str,
+        name: str,
+        shift_start: str,
+        shift_end: str,
+        slots_data: List[Dict]
+    ) -> bool:
+        """
+        Обновляет шаблон графика (обратная совместимость)
+
+        Фактически удаляет старый и создаёт новый
+        """
+        # Удаляем старый
+        self.delete_schedule(schedule_id)
+
+        # Создаём новый
+        return self.create_schedule_template(
+            schedule_id=schedule_id,
+            name=name,
+            shift_start=shift_start,
+            shift_end=shift_end,
+            slots_data=slots_data
+        )
+
+    def delete_schedule_template(self, schedule_id: str) -> bool:
+        """Алиас для delete_schedule() (обратная совместимость)"""
+        return self.delete_schedule(schedule_id)
 
 
 # ============================================================================

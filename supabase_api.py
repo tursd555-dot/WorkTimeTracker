@@ -180,7 +180,56 @@ class SupabaseAPI:
         except Exception as e:
             logger.error(f"Failed to upsert user {email}: {e}")
             raise
-    
+
+    def delete_user(self, email: str) -> bool:
+        """Удалить пользователя (soft delete - is_active=False)"""
+        try:
+            em = (email or "").strip().lower()
+            # Soft delete - помечаем как неактивного
+            self.client.table('users')\
+                .update({'is_active': False, 'updated_at': datetime.now(timezone.utc).isoformat()})\
+                .eq('email', em)\
+                .execute()
+            logger.info(f"✅ User deleted: {em}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete user {email}: {e}")
+            return False
+
+    def update_user_fields(self, email: str, fields: Dict[str, Any]) -> None:
+        """Обновить отдельные поля пользователя"""
+        try:
+            em = (email or "").strip().lower()
+
+            # Маппинг полей из sheets формата в supabase
+            data = {'updated_at': datetime.now(timezone.utc).isoformat()}
+            field_map = {
+                'Name': 'name',
+                'Phone': 'phone',
+                'Role': 'role',
+                'Telegram': 'telegram_id',
+                'Group': 'group_name',
+                'NotifyTelegram': 'notify_telegram'
+            }
+
+            for key, value in fields.items():
+                supabase_key = field_map.get(key, key.lower())
+                if supabase_key == 'notify_telegram':
+                    data[supabase_key] = str(value).lower() in ('yes', 'true', '1', 'да')
+                else:
+                    data[supabase_key] = value
+
+            self.client.table('users').update(data).eq('email', em).execute()
+            logger.info(f"✅ User fields updated: {em}")
+        except Exception as e:
+            logger.error(f"Failed to update user fields for {email}: {e}")
+            raise
+
+    def list_worksheet_titles(self) -> List[str]:
+        """Заглушка для совместимости с sheets_api"""
+        # В Supabase нет листов, возвращаем имена таблиц
+        return ['users', 'work_sessions', 'work_log', 'break_log', 'break_schedules']
+
     # ========================================================================
     # WORK SESSIONS
     # ========================================================================
@@ -223,8 +272,32 @@ class SupabaseAPI:
             return []
 
     def get_all_active_sessions(self) -> List[Dict]:
-        """Алиас для get_active_sessions (совместимость с sheets_api)"""
-        return self.get_active_sessions()
+        """
+        Получить все активные сессии (совместимость с sheets_api)
+
+        Returns:
+            List с полями Email, Status, SessionID, LoginTime для совместимости
+        """
+        try:
+            response = self.client.table('work_sessions')\
+                .select('*')\
+                .eq('status', 'active')\
+                .execute()
+
+            # Маппинг в формат sheets_api (с заглавными буквами)
+            result = []
+            for row in response.data:
+                result.append({
+                    'Email': row.get('email', ''),
+                    'Status': 'active',  # Всегда active, т.к. фильтруем по этому статусу
+                    'SessionID': row.get('session_id', ''),
+                    'LoginTime': row.get('login_time', ''),
+                    'Name': row.get('name', '')
+                })
+            return result
+        except Exception as e:
+            logger.error(f"Failed to get all active sessions: {e}")
+            return []
 
     def get_active_session(self, email: str) -> Optional[Dict]:
         """Получить активную сессию по email"""
@@ -312,6 +385,53 @@ class SupabaseAPI:
         except Exception as e:
             logger.error(f"Failed to check session status: {e}")
             return 'unknown'
+
+    def kick_active_session(self, email: str, logout_time: str = None) -> bool:
+        """
+        Принудительно завершить активную сессию пользователя (force logout)
+
+        Args:
+            email: Email пользователя
+            logout_time: Время разлогина (ISO формат)
+
+        Returns:
+            True если сессия найдена и завершена, False если не найдена
+        """
+        try:
+            em = (email or "").strip().lower()
+            if not logout_time:
+                logout_time = datetime.now(timezone.utc).isoformat()
+
+            # Проверяем есть ли активная сессия
+            check = self.client.table('work_sessions')\
+                .select('id, session_id')\
+                .eq('email', em)\
+                .eq('status', 'active')\
+                .execute()
+
+            if not check.data:
+                logger.info(f"No active session found for {em}")
+                return False
+
+            # Завершаем все активные сессии пользователя
+            data = {
+                'logout_time': logout_time,
+                'logout_type': 'force',
+                'status': 'completed'
+            }
+
+            self.client.table('work_sessions')\
+                .update(data)\
+                .eq('email', em)\
+                .eq('status', 'active')\
+                .execute()
+
+            logger.info(f"✅ Force logout completed for {em}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to kick session for {email}: {e}")
+            return False
 
     # ========================================================================
     # WORK LOG
