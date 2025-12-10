@@ -259,6 +259,512 @@ class SupabaseAPI:
         except:
             return []
 
+    # ========================================================================
+    # BREAK SCHEDULES (Графики перерывов)
+    # ========================================================================
+
+    def get_break_schedules(self) -> List[Dict]:
+        """Получить все графики перерывов"""
+        try:
+            response = self.client.table('break_schedules')\
+                .select('*')\
+                .eq('is_active', True)\
+                .execute()
+            return response.data
+        except Exception as e:
+            logger.error(f"Failed to get break schedules: {e}")
+            return []
+
+    def get_break_schedule_by_id(self, schedule_id: str) -> Optional[Dict]:
+        """Получить график по ID"""
+        try:
+            response = self.client.table('break_schedules')\
+                .select('*')\
+                .eq('id', schedule_id)\
+                .execute()
+            return response.data[0] if response.data else None
+        except Exception as e:
+            logger.error(f"Failed to get schedule {schedule_id}: {e}")
+            return None
+
+    def get_break_schedule_by_name(self, name: str) -> Optional[Dict]:
+        """Получить график по названию"""
+        try:
+            response = self.client.table('break_schedules')\
+                .select('*')\
+                .eq('name', name)\
+                .eq('is_active', True)\
+                .execute()
+            return response.data[0] if response.data else None
+        except Exception as e:
+            logger.error(f"Failed to get schedule by name {name}: {e}")
+            return None
+
+    def create_break_schedule(self, name: str, description: str = "",
+                              shift_start: str = None, shift_end: str = None,
+                              created_by: str = "") -> Optional[str]:
+        """Создать новый график перерывов"""
+        try:
+            data = {
+                'name': name,
+                'description': description,
+                'shift_start': shift_start,
+                'shift_end': shift_end,
+                'created_by': created_by,
+                'is_active': True
+            }
+            response = self.client.table('break_schedules').insert(data).execute()
+            return str(response.data[0]['id']) if response.data else None
+        except Exception as e:
+            logger.error(f"Failed to create schedule: {e}")
+            return None
+
+    def delete_break_schedule(self, schedule_id: str) -> bool:
+        """Удалить график (мягкое удаление)"""
+        try:
+            self.client.table('break_schedules')\
+                .update({'is_active': False})\
+                .eq('id', schedule_id)\
+                .execute()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete schedule: {e}")
+            return False
+
+    # ========================================================================
+    # BREAK LIMITS (Лимиты перерывов)
+    # ========================================================================
+
+    def get_break_limits(self, schedule_id: str) -> List[Dict]:
+        """Получить лимиты для графика"""
+        try:
+            response = self.client.table('break_limits')\
+                .select('*')\
+                .eq('schedule_id', schedule_id)\
+                .execute()
+            return response.data
+        except Exception as e:
+            logger.error(f"Failed to get break limits: {e}")
+            return []
+
+    def create_break_limit(self, schedule_id: str, break_type: str,
+                           duration_minutes: int, daily_count: int) -> bool:
+        """Создать лимит для графика"""
+        try:
+            data = {
+                'schedule_id': schedule_id,
+                'break_type': break_type,
+                'duration_minutes': duration_minutes,
+                'daily_count': daily_count
+            }
+            self.client.table('break_limits').insert(data).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to create break limit: {e}")
+            return False
+
+    def get_default_limits(self) -> List[Dict]:
+        """Получить дефолтные лимиты (из Default Schedule или config)"""
+        try:
+            # Пробуем найти дефолтный график
+            default_schedule = self.get_break_schedule_by_name('Default Schedule')
+            if default_schedule:
+                limits = self.get_break_limits(default_schedule['id'])
+                if limits:
+                    return limits
+
+            # Возвращаем хардкод дефолты
+            return [
+                {'break_type': 'Перерыв', 'duration_minutes': 15, 'daily_count': 3},
+                {'break_type': 'Обед', 'duration_minutes': 60, 'daily_count': 1}
+            ]
+        except Exception as e:
+            logger.error(f"Failed to get default limits: {e}")
+            return [
+                {'break_type': 'Перерыв', 'duration_minutes': 15, 'daily_count': 3},
+                {'break_type': 'Обед', 'duration_minutes': 60, 'daily_count': 1}
+            ]
+
+    # ========================================================================
+    # USER BREAK ASSIGNMENTS (Назначение графиков)
+    # ========================================================================
+
+    def get_user_break_assignment(self, email: str) -> Optional[Dict]:
+        """Получить назначенный график пользователя"""
+        try:
+            response = self.client.table('user_break_assignments')\
+                .select('*, break_schedules(*)')\
+                .eq('email', email.lower())\
+                .eq('is_active', True)\
+                .execute()
+            return response.data[0] if response.data else None
+        except Exception as e:
+            logger.error(f"Failed to get user assignment for {email}: {e}")
+            return None
+
+    def assign_break_schedule(self, email: str, schedule_id: str,
+                              assigned_by: str = "") -> bool:
+        """Назначить график пользователю"""
+        try:
+            # Получаем user_id
+            user = self.client.table('users').select('id').eq('email', email.lower()).execute()
+            user_id = user.data[0]['id'] if user.data else None
+
+            # Деактивируем предыдущие назначения
+            self.client.table('user_break_assignments')\
+                .update({'is_active': False})\
+                .eq('email', email.lower())\
+                .execute()
+
+            # Создаем новое назначение
+            data = {
+                'user_id': user_id,
+                'email': email.lower(),
+                'schedule_id': schedule_id,
+                'assigned_by': assigned_by,
+                'is_active': True
+            }
+            self.client.table('user_break_assignments').insert(data).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to assign schedule to {email}: {e}")
+            return False
+
+    def unassign_break_schedule(self, email: str) -> bool:
+        """Снять назначение графика"""
+        try:
+            self.client.table('user_break_assignments')\
+                .update({'is_active': False})\
+                .eq('email', email.lower())\
+                .execute()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to unassign schedule from {email}: {e}")
+            return False
+
+    # ========================================================================
+    # BREAK LOG (Расширенные методы)
+    # ========================================================================
+
+    def start_break_extended(self, email: str, name: str, break_type: str,
+                             session_id: str = "", expected_duration: int = None) -> Optional[str]:
+        """Начать перерыв (расширенная версия)"""
+        try:
+            user = self.client.table('users').select('id').eq('email', email.lower()).execute()
+            user_id = user.data[0]['id'] if user.data else None
+
+            data = {
+                'user_id': user_id,
+                'email': email.lower(),
+                'name': name,
+                'break_type': break_type,
+                'start_time': datetime.now(timezone.utc).isoformat(),
+                'date': date.today().isoformat(),
+                'status': 'Active',
+                'session_id': session_id,
+                'is_over_limit': False
+            }
+
+            response = self.client.table('break_log').insert(data).execute()
+            logger.info(f"✅ Break started for {email}: {break_type}")
+            return str(response.data[0]['id']) if response.data else None
+        except Exception as e:
+            logger.error(f"Failed to start break for {email}: {e}")
+            return None
+
+    def end_break_extended(self, email: str, break_type: str) -> Optional[Dict]:
+        """Завершить активный перерыв (расширенная версия)"""
+        try:
+            # Находим активный перерыв
+            today = date.today().isoformat()
+            response = self.client.table('break_log')\
+                .select('*')\
+                .eq('email', email.lower())\
+                .eq('break_type', break_type)\
+                .eq('status', 'Active')\
+                .eq('date', today)\
+                .order('start_time', desc=True)\
+                .limit(1)\
+                .execute()
+
+            if not response.data:
+                logger.warning(f"No active break found for {email}")
+                return None
+
+            break_record = response.data[0]
+            break_id = break_record['id']
+            start_time = datetime.fromisoformat(break_record['start_time'].replace('Z', '+00:00'))
+            end_time = datetime.now(timezone.utc)
+            duration = int((end_time - start_time).total_seconds() / 60)
+
+            # Обновляем запись
+            update_data = {
+                'end_time': end_time.isoformat(),
+                'duration_minutes': duration,
+                'status': 'Completed'
+            }
+
+            self.client.table('break_log')\
+                .update(update_data)\
+                .eq('id', break_id)\
+                .execute()
+
+            logger.info(f"✅ Break ended for {email}: {break_type}, duration={duration}min")
+            return {
+                'id': break_id,
+                'duration': duration,
+                'start_time': start_time.isoformat(),
+                'end_time': end_time.isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Failed to end break for {email}: {e}")
+            return None
+
+    def get_active_break_for_user(self, email: str, break_type: str = None) -> Optional[Dict]:
+        """Получить активный перерыв пользователя"""
+        try:
+            today = date.today().isoformat()
+            query = self.client.table('break_log')\
+                .select('*')\
+                .eq('email', email.lower())\
+                .eq('status', 'Active')\
+                .eq('date', today)
+
+            if break_type:
+                query = query.eq('break_type', break_type)
+
+            response = query.order('start_time', desc=True).limit(1).execute()
+            return response.data[0] if response.data else None
+        except Exception as e:
+            logger.error(f"Failed to get active break for {email}: {e}")
+            return None
+
+    def count_breaks_today(self, email: str, break_type: str) -> int:
+        """Подсчитать количество перерывов сегодня"""
+        try:
+            today = date.today().isoformat()
+            response = self.client.table('break_log')\
+                .select('id', count='exact')\
+                .eq('email', email.lower())\
+                .eq('break_type', break_type)\
+                .eq('date', today)\
+                .execute()
+            return response.count or 0
+        except Exception as e:
+            logger.error(f"Failed to count breaks for {email}: {e}")
+            return 0
+
+    def get_all_active_breaks_today(self) -> List[Dict]:
+        """Получить все активные перерывы за сегодня (для Dashboard)"""
+        try:
+            today = date.today().isoformat()
+            response = self.client.table('break_log')\
+                .select('*')\
+                .eq('status', 'Active')\
+                .eq('date', today)\
+                .execute()
+
+            # Вычисляем текущую длительность для каждого
+            result = []
+            now = datetime.now(timezone.utc)
+            for row in response.data:
+                start_time = datetime.fromisoformat(row['start_time'].replace('Z', '+00:00'))
+                duration = int((now - start_time).total_seconds() / 60)
+                row['current_duration'] = duration
+                result.append(row)
+
+            return result
+        except Exception as e:
+            logger.error(f"Failed to get all active breaks: {e}")
+            return []
+
+    def get_break_usage_today(self, email: str) -> Dict:
+        """Получить использование перерывов за сегодня"""
+        try:
+            today = date.today().isoformat()
+            response = self.client.table('break_log')\
+                .select('*')\
+                .eq('email', email.lower())\
+                .eq('date', today)\
+                .execute()
+
+            usage = {
+                'Перерыв': {'count': 0, 'total_minutes': 0},
+                'Обед': {'count': 0, 'total_minutes': 0}
+            }
+
+            for row in response.data:
+                break_type = row.get('break_type', '')
+                if break_type in usage:
+                    usage[break_type]['count'] += 1
+                    usage[break_type]['total_minutes'] += row.get('duration_minutes') or 0
+
+            return usage
+        except Exception as e:
+            logger.error(f"Failed to get break usage for {email}: {e}")
+            return {'Перерыв': {'count': 0, 'total_minutes': 0},
+                    'Обед': {'count': 0, 'total_minutes': 0}}
+
+    def mark_break_over_limit(self, break_id: str) -> bool:
+        """Пометить перерыв как превысивший лимит"""
+        try:
+            self.client.table('break_log')\
+                .update({'is_over_limit': True})\
+                .eq('id', break_id)\
+                .execute()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to mark break over limit: {e}")
+            return False
+
+    # ========================================================================
+    # VIOLATIONS (Нарушения)
+    # ========================================================================
+
+    def log_violation(self, email: str, name: str, violation_type: str,
+                      break_type: str = None, expected_duration: int = None,
+                      actual_duration: int = None, details: str = "") -> bool:
+        """Записать нарушение"""
+        try:
+            user = self.client.table('users').select('id').eq('email', email.lower()).execute()
+            user_id = user.data[0]['id'] if user.data else None
+
+            excess = (actual_duration - expected_duration) if (actual_duration and expected_duration) else None
+
+            data = {
+                'user_id': user_id,
+                'email': email.lower(),
+                'name': name,
+                'violation_type': violation_type,
+                'break_type': break_type,
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'expected_duration': expected_duration,
+                'actual_duration': actual_duration,
+                'excess_minutes': excess,
+                'date': date.today().isoformat(),
+                'details': details
+            }
+
+            self.client.table('violations').insert(data).execute()
+            logger.warning(f"⚠️ Violation logged for {email}: {violation_type}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to log violation: {e}")
+            return False
+
+    def get_violations(self, email: str = None, date_from: str = None,
+                       date_to: str = None, violation_type: str = None) -> List[Dict]:
+        """Получить нарушения с фильтрацией"""
+        try:
+            query = self.client.table('violations').select('*')
+
+            if email:
+                query = query.eq('email', email.lower())
+            if date_from:
+                query = query.gte('date', date_from)
+            if date_to:
+                query = query.lte('date', date_to)
+            if violation_type:
+                query = query.eq('violation_type', violation_type)
+
+            response = query.order('timestamp', desc=True).execute()
+            return response.data
+        except Exception as e:
+            logger.error(f"Failed to get violations: {e}")
+            return []
+
+    def get_violations_today(self) -> List[Dict]:
+        """Получить все нарушения за сегодня"""
+        today = date.today().isoformat()
+        return self.get_violations(date_from=today, date_to=today)
+
+    # ========================================================================
+    # BREAK STATUS (Полный статус для пользователя)
+    # ========================================================================
+
+    def get_user_break_status(self, email: str) -> Dict:
+        """
+        Получить полный статус перерывов пользователя
+
+        Returns:
+            {
+                'schedule': {'id': ..., 'name': ..., ...} or None,
+                'limits': {'Перерыв': {'count': 3, 'time': 15}, 'Обед': {...}},
+                'used_today': {'Перерыв': 1, 'Обед': 0},
+                'active_break': {...} or None
+            }
+        """
+        try:
+            result = {
+                'schedule': None,
+                'limits': {},
+                'used_today': {'Перерыв': 0, 'Обед': 0},
+                'active_break': None
+            }
+
+            # 1. Получить назначенный график
+            assignment = self.get_user_break_assignment(email)
+            if assignment and 'break_schedules' in assignment:
+                schedule = assignment['break_schedules']
+                result['schedule'] = {
+                    'id': schedule.get('id'),
+                    'name': schedule.get('name'),
+                    'schedule_id': schedule.get('id')  # для совместимости
+                }
+
+                # Получить лимиты из назначенного графика
+                limits = self.get_break_limits(schedule['id'])
+                for limit in limits:
+                    result['limits'][limit['break_type']] = {
+                        'count': limit['daily_count'],
+                        'time': limit['duration_minutes']
+                    }
+
+            # 2. Если нет графика - использовать дефолтные лимиты
+            if not result['limits']:
+                default_limits = self.get_default_limits()
+                for limit in default_limits:
+                    result['limits'][limit['break_type']] = {
+                        'count': limit['daily_count'],
+                        'time': limit['duration_minutes']
+                    }
+
+            # 3. Получить использование за сегодня
+            usage = self.get_break_usage_today(email)
+            result['used_today'] = {
+                'Перерыв': usage.get('Перерыв', {}).get('count', 0),
+                'Обед': usage.get('Обед', {}).get('count', 0)
+            }
+
+            # 4. Получить активный перерыв
+            active = self.get_active_break_for_user(email)
+            if active:
+                start_time = datetime.fromisoformat(active['start_time'].replace('Z', '+00:00'))
+                now = datetime.now(timezone.utc)
+                duration = int((now - start_time).total_seconds() / 60)
+
+                break_type = active.get('break_type', 'Перерыв')
+                limit = result['limits'].get(break_type, {}).get('time', 15)
+
+                result['active_break'] = {
+                    'id': active['id'],
+                    'break_type': break_type,
+                    'start_time': start_time.strftime('%H:%M'),
+                    'duration': duration,
+                    'limit': limit
+                }
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to get break status for {email}: {e}")
+            return {
+                'schedule': None,
+                'limits': {'Перерыв': {'count': 3, 'time': 15}, 'Обед': {'count': 1, 'time': 60}},
+                'used_today': {'Перерыв': 0, 'Обед': 0},
+                'active_break': None
+            }
+
 
 # ============================================================================
 # SINGLETON

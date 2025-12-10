@@ -11,9 +11,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from config import STATUSES, STATUS_GROUPS, MAX_COMMENT_LENGTH
-from api_adapter import get_sheets_api
+from api_adapter import get_sheets_api, get_break_manager
 from user_app.db_local import LocalDB, LocalDBError, write_tx
-from admin_app.break_manager import BreakManager
 from shared.break_status_integration import init_integration, on_status_change
 
 try:
@@ -178,13 +177,12 @@ class EmployeeApp(QWidget):
             from user_app.db_local import get_db
             self.db = get_db()
             
-            # Инициализация системы перерывов
+            # Инициализация системы перерывов v2.1
             try:
-                from api_adapter import get_sheets_api
+                self.break_mgr = get_break_manager()
                 sheets_api = get_sheets_api()
-                self.break_mgr = BreakManager(sheets_api)
-                init_integration(self.break_mgr)
-                logger.info("Break system initialized")
+                init_integration(self.break_mgr, sheets_api)
+                logger.info("✅ Break system v2.1 initialized")
             except Exception as e:
                 logger.error(f"Failed to initialize break system: {e}")
                 self.break_mgr = None
