@@ -236,59 +236,140 @@ class BreakManager:
         # Проверяем кэш
         if schedule_id in self._cache:
             return self._cache[schedule_id]
-        
+
         try:
-            ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
-            rows = self.sheets._read_table(ws)
-            
-            # Фильтруем строки для данного графика
-            schedule_rows = [r for r in rows if r.get("ScheduleID") == schedule_id]
-            if not schedule_rows:
-                return None
-            
-            first = schedule_rows[0]
-            
-            # Собираем лимиты (уникальные по типу)
-            limits_dict = {}
-            for row in schedule_rows:
-                break_type = row.get("SlotType", "")
-                if break_type and break_type not in limits_dict:
-                    limits_dict[break_type] = BreakLimit(
-                        break_type=break_type,
-                        daily_count=3 if break_type == "Перерыв" else 1,  # По умолчанию
-                        time_minutes=int(row.get("Duration", "15"))
-                    )
-            
-            # Собираем окна
-            windows = []
-            for row in schedule_rows:
+            # Проверяем, есть ли метод для Supabase
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Supabase - читаем из 3 таблиц
                 try:
-                    window_start = datetime.strptime(row.get("WindowStart", "09:00"), "%H:%M").time()
-                    window_end = datetime.strptime(row.get("WindowEnd", "17:00"), "%H:%M").time()
-                    windows.append(BreakWindow(
-                        break_type=row.get("SlotType", ""),
-                        start_time=window_start,
-                        end_time=window_end,
-                        priority=int(row.get("Order", "1"))
-                    ))
-                except:
-                    pass
-            
-            # Создаём объект графика
-            schedule = BreakSchedule(
-                schedule_id=schedule_id,
-                name=first.get("Name", ""),
-                shift_start=datetime.strptime(first.get("ShiftStart", "09:00"), "%H:%M").time(),
-                shift_end=datetime.strptime(first.get("ShiftEnd", "17:00"), "%H:%M").time(),
-                limits=list(limits_dict.values()),
-                windows=windows
-            )
-            
-            # Кэшируем
-            self._cache[schedule_id] = schedule
-            
-            return schedule
-            
+                    # 1. Основная информация о графике
+                    schedule_response = self.sheets.client.table('break_schedules')\
+                        .select('*')\
+                        .eq('id', schedule_id)\
+                        .execute()
+
+                    if not schedule_response.data:
+                        logger.debug(f"Schedule {schedule_id} not found")
+                        return None
+
+                    schedule_data = schedule_response.data[0]
+
+                    # 2. Лимиты
+                    limits_response = self.sheets.client.table('break_limits')\
+                        .select('*')\
+                        .eq('schedule_id', schedule_id)\
+                        .execute()
+
+                    limits = []
+                    for limit_data in limits_response.data:
+                        limits.append(BreakLimit(
+                            break_type=limit_data.get('break_type', 'Перерыв'),
+                            daily_count=int(limit_data.get('daily_count', 1)),
+                            time_minutes=int(limit_data.get('duration_minutes', 15))
+                        ))
+
+                    # 3. Окна
+                    windows_response = self.sheets.client.table('break_windows')\
+                        .select('*')\
+                        .eq('schedule_id', schedule_id)\
+                        .execute()
+
+                    windows = []
+                    for window_data in windows_response.data:
+                        try:
+                            window_start_str = str(window_data.get('window_start', '09:00:00'))
+                            window_end_str = str(window_data.get('window_end', '17:00:00'))
+
+                            # Парсим TIME поля
+                            window_start = datetime.strptime(window_start_str.split('.')[0], "%H:%M:%S").time()
+                            window_end = datetime.strptime(window_end_str.split('.')[0], "%H:%M:%S").time()
+
+                            windows.append(BreakWindow(
+                                break_type=window_data.get('break_type', 'Перерыв'),
+                                start_time=window_start,
+                                end_time=window_end,
+                                priority=int(window_data.get('priority', 1))
+                            ))
+                        except Exception as e:
+                            logger.warning(f"Failed to parse window: {e}")
+
+                    # 4. Создаём объект графика
+                    shift_start_str = str(schedule_data.get('shift_start', '09:00:00'))
+                    shift_end_str = str(schedule_data.get('shift_end', '17:00:00'))
+
+                    shift_start = datetime.strptime(shift_start_str.split('.')[0], "%H:%M:%S").time()
+                    shift_end = datetime.strptime(shift_end_str.split('.')[0], "%H:%M:%S").time()
+
+                    schedule = BreakSchedule(
+                        schedule_id=schedule_id,
+                        name=schedule_data.get('name', ''),
+                        shift_start=shift_start,
+                        shift_end=shift_end,
+                        limits=limits,
+                        windows=windows
+                    )
+
+                    # Кэшируем
+                    self._cache[schedule_id] = schedule
+
+                    return schedule
+
+                except Exception as e:
+                    logger.error(f"Failed to get schedule from Supabase: {e}", exc_info=True)
+                    return None
+            else:
+                # Google Sheets - старая логика
+                ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
+                rows = self.sheets._read_table(ws)
+
+                # Фильтруем строки для данного графика
+                schedule_rows = [r for r in rows if r.get("ScheduleID") == schedule_id]
+                if not schedule_rows:
+                    return None
+
+                first = schedule_rows[0]
+
+                # Собираем лимиты (уникальные по типу)
+                limits_dict = {}
+                for row in schedule_rows:
+                    break_type = row.get("SlotType", "")
+                    if break_type and break_type not in limits_dict:
+                        limits_dict[break_type] = BreakLimit(
+                            break_type=break_type,
+                            daily_count=3 if break_type == "Перерыв" else 1,  # По умолчанию
+                            time_minutes=int(row.get("Duration", "15"))
+                        )
+
+                # Собираем окна
+                windows = []
+                for row in schedule_rows:
+                    try:
+                        window_start = datetime.strptime(row.get("WindowStart", "09:00"), "%H:%M").time()
+                        window_end = datetime.strptime(row.get("WindowEnd", "17:00"), "%H:%M").time()
+                        windows.append(BreakWindow(
+                            break_type=row.get("SlotType", ""),
+                            start_time=window_start,
+                            end_time=window_end,
+                            priority=int(row.get("Order", "1"))
+                        ))
+                    except:
+                        pass
+
+                # Создаём объект графика
+                schedule = BreakSchedule(
+                    schedule_id=schedule_id,
+                    name=first.get("Name", ""),
+                    shift_start=datetime.strptime(first.get("ShiftStart", "09:00"), "%H:%M").time(),
+                    shift_end=datetime.strptime(first.get("ShiftEnd", "17:00"), "%H:%M").time(),
+                    limits=list(limits_dict.values()),
+                    windows=windows
+                )
+
+                # Кэшируем
+                self._cache[schedule_id] = schedule
+
+                return schedule
+
         except Exception as e:
             logger.error(f"Failed to get schedule {schedule_id}: {e}", exc_info=True)
             return None
@@ -397,41 +478,84 @@ class BreakManager:
             if not schedule:
                 logger.error(f"Schedule {schedule_id} not found")
                 return False
-            
-            ws = self.sheets.get_worksheet(self.ASSIGNMENTS_SHEET)
-            
-            # Проверяем, есть ли уже назначение
-            rows = self.sheets._read_table(ws)
-            existing = next((r for r in rows if r.get("Email", "").lower() == email.lower()), None)
-            
-            if existing:
-                # Обновляем существующее назначение
-                # Находим номер строки
-                all_values = ws.get_all_values()
-                for idx, row in enumerate(all_values[1:], start=2):
-                    if row and row[0].lower() == email.lower():
-                        # Обновляем строку
-                        ws.update(f"A{idx}:D{idx}", [[
-                            email,
-                            schedule_id,
-                            datetime.now().strftime("%Y-%m-%d"),
-                            admin_email
-                        ]])
-                        logger.info(f"Updated schedule assignment for {email}")
-                        return True
+
+            # Проверяем, есть ли метод для Supabase
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Supabase - прямая работа с таблицей
+                try:
+                    # Получаем user_id
+                    user_response = self.sheets.client.table('users')\
+                        .select('id')\
+                        .eq('email', email.lower())\
+                        .execute()
+
+                    if not user_response.data:
+                        logger.error(f"User {email} not found")
+                        return False
+
+                    user_id = user_response.data[0]['id']
+
+                    # Деактивируем старые назначения
+                    self.sheets.client.table('user_break_assignments')\
+                        .update({'is_active': False})\
+                        .eq('email', email.lower())\
+                        .execute()
+
+                    # Создаём новое назначение
+                    assignment_data = {
+                        'user_id': user_id,
+                        'email': email.lower(),
+                        'schedule_id': schedule_id,
+                        'assigned_by': admin_email,
+                        'is_active': True
+                    }
+
+                    self.sheets.client.table('user_break_assignments')\
+                        .insert(assignment_data)\
+                        .execute()
+
+                    logger.info(f"Assigned schedule {schedule_id} to {email}")
+                    return True
+
+                except Exception as e:
+                    logger.error(f"Failed to assign schedule in Supabase: {e}", exc_info=True)
+                    return False
             else:
-                # Создаём новое назначение
-                ws.append_row([
-                    email,
-                    schedule_id,
-                    datetime.now().strftime("%Y-%m-%d"),
-                    admin_email
-                ])
-                logger.info(f"Created schedule assignment for {email}")
-                return True
-            
-            return False
-            
+                # Google Sheets - старая логика
+                ws = self.sheets.get_worksheet(self.ASSIGNMENTS_SHEET)
+
+                # Проверяем, есть ли уже назначение
+                rows = self.sheets._read_table(ws)
+                existing = next((r for r in rows if r.get("Email", "").lower() == email.lower()), None)
+
+                if existing:
+                    # Обновляем существующее назначение
+                    # Находим номер строки
+                    all_values = ws.get_all_values()
+                    for idx, row in enumerate(all_values[1:], start=2):
+                        if row and row[0].lower() == email.lower():
+                            # Обновляем строку
+                            ws.update(f"A{idx}:D{idx}", [[
+                                email,
+                                schedule_id,
+                                datetime.now().strftime("%Y-%m-%d"),
+                                admin_email
+                            ]])
+                            logger.info(f"Updated schedule assignment for {email}")
+                            return True
+                else:
+                    # Создаём новое назначение
+                    ws.append_row([
+                        email,
+                        schedule_id,
+                        datetime.now().strftime("%Y-%m-%d"),
+                        admin_email
+                    ])
+                    logger.info(f"Created schedule assignment for {email}")
+                    return True
+
+                return False
+
         except Exception as e:
             logger.error(f"Failed to assign schedule: {e}", exc_info=True)
             return False
@@ -439,23 +563,46 @@ class BreakManager:
     def get_user_schedule(self, email: str) -> Optional[BreakSchedule]:
         """Получает назначенный график пользователя"""
         try:
-            ws = self.sheets.get_worksheet(self.ASSIGNMENTS_SHEET)
-            rows = self.sheets._read_table(ws)
-            
-            # Ищем назначение
-            assignment = next((r for r in rows if r.get("Email", "").lower() == email.lower()), None)
-            
-            if not assignment:
-                return None
-            
-            schedule_id = assignment.get("ScheduleID", "")
-            if not schedule_id:
-                return None
-            
-            return self.get_schedule(schedule_id)
-            
+            # Проверяем, есть ли метод для Supabase
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Supabase - прямая работа с таблицей
+                try:
+                    # Ищем активное назначение
+                    response = self.sheets.client.table('user_break_assignments')\
+                        .select('schedule_id')\
+                        .eq('email', email.lower())\
+                        .eq('is_active', True)\
+                        .execute()
+
+                    if not response.data:
+                        logger.debug(f"No schedule assignment for {email}")
+                        return None
+
+                    schedule_id = response.data[0]['schedule_id']
+                    return self.get_schedule(schedule_id)
+
+                except Exception as e:
+                    logger.error(f"Failed to get user schedule from Supabase: {e}")
+                    return None
+            else:
+                # Google Sheets - старая логика
+                ws = self.sheets.get_worksheet(self.ASSIGNMENTS_SHEET)
+                rows = self.sheets._read_table(ws)
+
+                # Ищем назначение
+                assignment = next((r for r in rows if r.get("Email", "").lower() == email.lower()), None)
+
+                if not assignment:
+                    return None
+
+                schedule_id = assignment.get("ScheduleID", "")
+                if not schedule_id:
+                    return None
+
+                return self.get_schedule(schedule_id)
+
         except Exception as e:
-            logger.error(f"Failed to get user schedule: {e}")
+            logger.error(f"Failed to get user schedule: {e}", exc_info=True)
             return None
     
     def unassign_schedule(self, email: str) -> bool:
