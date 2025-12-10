@@ -148,6 +148,66 @@ python admin_app/main_admin.py
 3. **UI компоненты** - интерфейсы админки и пользовательского приложения не менялись
 4. **Конфигурация** - config.py и переменные окружения остались теми же
 
+## Дополнительные исправления (2025-12-10, вторая итерация)
+
+### Проблема 4: Ошибки записи сессий в базу данных
+
+**Симптомы:**
+```
+ERROR - Failed to set active session: 'cannot insert into view "active_sessions"'
+ERROR - Failed to finish active session: Could not find the 'logout_reason' column of 'active_sessions'
+```
+
+**Причина:**
+- Методы `set_active_session()` и `finish_active_session()` пытались работать с VIEW 'active_sessions'
+- В Supabase 'active_sessions' - это VIEW для чтения, а данные хранятся в таблице 'work_sessions'
+- Поле 'logout_reason' не существует в схеме базы данных
+
+**Исправления в `/home/user/WorkTimeTracker/supabase_api.py`:**
+
+1. **set_active_session()** (строка 535):
+   - Было: `self.client.table('active_sessions').insert(data).execute()`
+   - Стало: `self.client.table('work_sessions').insert(data).execute()`
+
+2. **finish_active_session()** (строки 553-557):
+   - Удалено несуществующее поле: `'logout_reason': reason,`
+   - Было: `self.client.table('active_sessions').update(data)...`
+   - Стало: `self.client.table('work_sessions').update(data)...`
+
+**Результат:**
+- ✅ Логин пользователя теперь корректно записывается в work_sessions
+- ✅ Логаут пользователя корректно обновляет запись в work_sessions
+- ✅ View 'active_sessions' используется только для чтения (что правильно)
+
+### Проблема 5: Пользователи не могут брать перерывы
+
+**Симптомы:**
+```
+WARNING - No schedule for user
+WARNING - Failed to start break: У вас нет назначенного графика перерывов
+```
+
+**Причина:**
+- В таблице `user_break_assignments` отсутствуют записи, назначающие графики перерывов пользователям
+- Break Manager проверяет наличие графика перед разрешением перерыва
+
+**Решение (требуется действие пользователя):**
+1. Открыть админ-панель: `python admin_app/main_admin.py`
+2. Перейти в раздел "Break Schedules" (Графики перерывов)
+3. Создать шаблон графика перерывов (если его нет)
+4. Назначить созданный график тестовым пользователям
+
+**Альтернатива (для быстрого тестирования):**
+Можно добавить запись напрямую в Supabase:
+```sql
+INSERT INTO user_break_assignments (user_id, schedule_id, assigned_at)
+SELECT u.id, s.id, NOW()
+FROM users u, break_schedules s
+WHERE u.email = 'test@example.com'
+  AND s.name = 'Standard Schedule'
+LIMIT 1;
+```
+
 ## Рекомендации для дальнейшей работы
 
 ### Критично:
@@ -168,8 +228,15 @@ python admin_app/main_admin.py
 ## Заключение
 
 Все критические проблемы устранены:
-1. ✅ Авторизация работает
-2. ✅ Перерывы отображаются в админке
-3. ✅ Полная совместимость с существующим кодом
+1. ✅ Авторизация работает - get_user_by_email() реализован
+2. ✅ Сессии записываются корректно - set_active_session() / finish_active_session() используют work_sessions
+3. ✅ Перерывы готовы к работе - требуется только назначить графики пользователям через админку
+4. ✅ Полная совместимость с существующим кодом
 
-Приложение готово к тестированию и продакшену.
+**Следующие шаги для полного тестирования:**
+1. Создать график перерывов в админ-панели
+2. Назначить график тестовым пользователям
+3. Протестировать полный цикл: логин → смена статуса → перерыв → выход
+4. Проверить отображение активных перерывов в dashboard админ-панели
+
+Приложение готово к тестированию.
