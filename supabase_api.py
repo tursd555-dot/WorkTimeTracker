@@ -162,6 +162,7 @@ class SupabaseAPI:
             'BreakSchedules': 'break_schedules',
             'UserBreakAssignments': 'user_break_assignments',
             'BreakViolations': 'break_violations',
+            'Violations': 'violations',  # v20.3: renamed sheet
             'Groups': 'groups',
             'WorkLog': 'work_log',
         }
@@ -231,14 +232,17 @@ class SupabaseAPI:
                 'effective_date': 'EffectiveDate',
                 'assigned_by': 'AssignedBy',
             },
-            'break_violations': {
+            'violations': {
                 'timestamp': 'Timestamp',
                 'email': 'Email',
+                'name': 'Name',
                 'violation_type': 'ViolationType',
+                'break_type': 'BreakType',
+                'expected_duration': 'ExpectedDuration',
+                'actual_duration': 'ActualDuration',
+                'excess_minutes': 'ExcessMinutes',
+                'date': 'Date',
                 'details': 'Details',
-                'severity': 'Severity',
-                'status': 'Status',
-                'session_id': 'SessionID',
             },
             'groups': {
                 'group_name': 'Group',
@@ -284,6 +288,7 @@ class SupabaseAPI:
             'BreakSchedules': 'break_schedules',
             'UserBreakAssignments': 'user_break_assignments',
             'BreakViolations': 'break_violations',
+            'Violations': 'violations',  # v20.3: renamed sheet
             'Groups': 'groups',
             'WorkLog': 'work_log',
         }
@@ -295,9 +300,11 @@ class SupabaseAPI:
             # Для каждой таблицы определяем порядок колонок
             column_mappings = {
                 'break_log': ['email', 'name', 'break_type', 'start_time', 'end_time', 'date', 'status', 'session_id'],
-                'break_violations': ['timestamp', 'email', 'violation_type', 'details', 'severity', 'status', 'session_id'],
-                'break_schedules': ['schedule_id', 'name', 'shift_start', 'shift_end', 'break_type', 'time_minutes', 'window_start', 'window_end', 'priority'],
-                'user_break_assignments': ['email', 'schedule_id', 'effective_date', 'assigned_by'],
+                'violations': ['email', 'name', 'violation_type', 'break_type', 'timestamp', 'expected_duration', 'actual_duration', 'excess_minutes', 'date', 'details'],
+                'break_schedules': ['name', 'shift_start', 'shift_end', 'description'],
+                'break_limits': ['schedule_id', 'break_type', 'duration_minutes', 'daily_count'],
+                'break_windows': ['schedule_id', 'break_type', 'window_start', 'window_end', 'priority'],
+                'user_break_assignments': ['email', 'schedule_id', 'assigned_by'],
                 'work_log': ['email', 'name', 'timestamp', 'action_type', 'status', 'details', 'session_id'],
                 'active_sessions': ['email', 'name', 'session_id', 'login_time', 'status'],
             }
@@ -447,7 +454,142 @@ class SupabaseAPI:
             self.client.table('work_log').insert(data).execute()
         except Exception as e:
             logger.error(f"Failed to log action: {e}")
-    
+
+    # ========================================================================
+    # BREAK SCHEDULES
+    # ========================================================================
+
+    def create_break_schedule(
+        self,
+        name: str,
+        shift_start: str,
+        shift_end: str,
+        description: str = ""
+    ) -> Optional[str]:
+        """
+        Создает график перерывов
+
+        Returns:
+            UUID графика или None если ошибка
+        """
+        try:
+            data = {
+                'name': name,
+                'description': description,
+                'shift_start': shift_start,
+                'shift_end': shift_end,
+                'is_active': True
+            }
+
+            response = self.client.table('break_schedules').insert(data).execute()
+
+            if response.data:
+                schedule_id = response.data[0]['id']
+                logger.info(f"Created break schedule: {name} (ID: {schedule_id})")
+                return str(schedule_id)
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Failed to create break schedule: {e}")
+            return None
+
+    def create_break_limit(
+        self,
+        schedule_id: str,
+        break_type: str,
+        duration_minutes: int,
+        daily_count: int
+    ) -> bool:
+        """Создает лимит перерывов для графика"""
+        try:
+            data = {
+                'schedule_id': schedule_id,
+                'break_type': break_type,
+                'duration_minutes': duration_minutes,
+                'daily_count': daily_count
+            }
+
+            self.client.table('break_limits').insert(data).execute()
+            logger.debug(f"Created break limit for schedule {schedule_id}: {break_type}, {duration_minutes}min")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to create break limit: {e}")
+            return False
+
+    def create_break_window(
+        self,
+        schedule_id: str,
+        break_type: str,
+        window_start: str,
+        window_end: str,
+        priority: int = 1
+    ) -> bool:
+        """Создает временное окно для перерывов"""
+        try:
+            data = {
+                'schedule_id': schedule_id,
+                'break_type': break_type,
+                'window_start': window_start,
+                'window_end': window_end,
+                'priority': priority
+            }
+
+            self.client.table('break_windows').insert(data).execute()
+            logger.debug(f"Created break window for schedule {schedule_id}: {break_type}, {window_start}-{window_end}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to create break window: {e}")
+            return False
+
+    def get_break_schedule(self, schedule_id: str) -> Optional[Dict]:
+        """Получает график перерывов с лимитами и окнами"""
+        try:
+            # Получаем основную информацию
+            schedule = self.client.table('break_schedules')\
+                .select('*')\
+                .eq('id', schedule_id)\
+                .execute()
+
+            if not schedule.data:
+                return None
+
+            result = schedule.data[0]
+
+            # Получаем лимиты
+            limits = self.client.table('break_limits')\
+                .select('*')\
+                .eq('schedule_id', schedule_id)\
+                .execute()
+
+            result['limits'] = limits.data or []
+
+            # Получаем окна
+            windows = self.client.table('break_windows')\
+                .select('*')\
+                .eq('schedule_id', schedule_id)\
+                .execute()
+
+            result['windows'] = windows.data or []
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to get break schedule: {e}")
+            return None
+
+    def delete_break_schedule(self, schedule_id: str) -> bool:
+        """Удаляет график перерывов (каскадно удаляет лимиты и окна)"""
+        try:
+            self.client.table('break_schedules').delete().eq('id', schedule_id).execute()
+            logger.info(f"Deleted break schedule: {schedule_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete break schedule: {e}")
+            return False
+
     # ========================================================================
     # BREAK LOG
     # ========================================================================

@@ -118,31 +118,92 @@ class BreakManager:
     ) -> bool:
         """
         Создаёт новый шаблон графика
-        
+
         Args:
-            schedule_id: ID графика (например, "SHIFT_8H")
+            schedule_id: ID графика (например, "SHIFT_8H") - игнорируется для Supabase, UUID генерируется автоматически
             name: Название (например, "График 5/2 (9-18)")
             shift_start: Начало смены "09:00"
             shift_end: Конец смены "17:00"
             limits: [{"break_type": "Перерыв", "daily_count": 3, "time_minutes": 15}, ...]
             windows: [{"break_type": "Перерыв", "start": "10:00", "end": "12:00", "priority": 1}, ...]
-        
+
         Returns:
             True если успешно
         """
         try:
-            ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
-            
-            # Формируем строки для записи
-            rows = []
-            
-            # Для каждого лимита создаём строку
-            for limit in limits:
-                # Находим окна для этого типа перерыва
-                break_windows = [w for w in windows if w.get('break_type') == limit['break_type']]
-                
-                if break_windows:
-                    for window in break_windows:
+            # Проверяем, что используется Supabase API с новыми методами
+            if hasattr(self.sheets, 'create_break_schedule'):
+                # Supabase - используем нормализованную структуру
+                # 1. Создаем основной график
+                new_schedule_id = self.sheets.create_break_schedule(
+                    name=name,
+                    shift_start=shift_start,
+                    shift_end=shift_end,
+                    description=f"Created from {schedule_id}"
+                )
+
+                if not new_schedule_id:
+                    logger.error("Failed to create break schedule")
+                    return False
+
+                # 2. Добавляем лимиты
+                for limit in limits:
+                    success = self.sheets.create_break_limit(
+                        schedule_id=new_schedule_id,
+                        break_type=limit.get('break_type', 'Перерыв'),
+                        duration_minutes=int(limit.get('time_minutes', 15)),
+                        daily_count=int(limit.get('daily_count', 1))
+                    )
+                    if not success:
+                        logger.warning(f"Failed to create limit for {limit.get('break_type')}")
+
+                # 3. Добавляем окна
+                for window in windows:
+                    success = self.sheets.create_break_window(
+                        schedule_id=new_schedule_id,
+                        break_type=window.get('break_type', 'Перерыв'),
+                        window_start=window.get('start', '09:00'),
+                        window_end=window.get('end', '17:00'),
+                        priority=int(window.get('priority', 1))
+                    )
+                    if not success:
+                        logger.warning(f"Failed to create window for {window.get('break_type')}")
+
+                logger.info(f"Created schedule '{name}' (ID: {new_schedule_id}) with {len(limits)} limits and {len(windows)} windows")
+
+                # Сбрасываем кэш
+                self._cache.pop(schedule_id, None)
+                self._cache.pop(new_schedule_id, None)
+
+                return True
+
+            else:
+                # Google Sheets - старая логика
+                ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
+
+                # Формируем строки для записи
+                rows = []
+
+                # Для каждого лимита создаём строку
+                for limit in limits:
+                    # Находим окна для этого типа перерыва
+                    break_windows = [w for w in windows if w.get('break_type') == limit['break_type']]
+
+                    if break_windows:
+                        for window in break_windows:
+                            rows.append([
+                                schedule_id,
+                                name,
+                                shift_start,
+                                shift_end,
+                                limit['break_type'],
+                                str(limit['time_minutes']),
+                                window.get('start', ''),
+                                window.get('end', ''),
+                                str(window.get('priority', 1))
+                            ])
+                    else:
+                        # Если нет окон, всё равно создаём строку (окно = весь день)
                         rows.append([
                             schedule_id,
                             name,
@@ -150,35 +211,22 @@ class BreakManager:
                             shift_end,
                             limit['break_type'],
                             str(limit['time_minutes']),
-                            window.get('start', ''),
-                            window.get('end', ''),
-                            str(window.get('priority', 1))
+                            shift_start,  # Окно = вся смена
+                            shift_end,
+                            "1"
                         ])
-                else:
-                    # Если нет окон, всё равно создаём строку (окно = весь день)
-                    rows.append([
-                        schedule_id,
-                        name,
-                        shift_start,
-                        shift_end,
-                        limit['break_type'],
-                        str(limit['time_minutes']),
-                        shift_start,  # Окно = вся смена
-                        shift_end,
-                        "1"
-                    ])
-            
-            # Записываем все строки
-            for row in rows:
-                self.sheets._request_with_retry(lambda: ws.append_row(row))
-            
-            logger.info(f"Created schedule {schedule_id} with {len(rows)} rows")
-            
-            # Сбрасываем кэш
-            self._cache.pop(schedule_id, None)
-            
-            return True
-            
+
+                # Записываем все строки
+                for row in rows:
+                    self.sheets._request_with_retry(lambda: ws.append_row(row))
+
+                logger.info(f"Created schedule {schedule_id} with {len(rows)} rows")
+
+                # Сбрасываем кэш
+                self._cache.pop(schedule_id, None)
+
+                return True
+
         except Exception as e:
             logger.error(f"Failed to create schedule: {e}", exc_info=True)
             return False
