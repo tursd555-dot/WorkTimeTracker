@@ -296,28 +296,52 @@ class BreakManager:
     def list_schedules(self) -> List[Dict]:
         """Возвращает список всех шаблонов"""
         try:
-            ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
-            rows = self.sheets._read_table(ws)
-            
-            # Группируем по schedule_id
-            schedules = {}
-            for row in rows:
-                sid = row.get("ScheduleID", "").strip()
-                if not sid:
-                    continue
-                
-                if sid not in schedules:
-                    schedules[sid] = {
-                        "schedule_id": sid,
-                        "name": row.get("Name", ""),
-                        "shift_start": row.get("ShiftStart", ""),
-                        "shift_end": row.get("ShiftEnd", "")
-                    }
-            
-            return list(schedules.values())
-            
+            # Проверяем, есть ли метод для Supabase
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Supabase - получаем данные напрямую из таблицы
+                try:
+                    response = self.sheets.client.table('break_schedules')\
+                        .select('*')\
+                        .eq('is_active', True)\
+                        .execute()
+
+                    schedules = []
+                    for row in response.data:
+                        schedules.append({
+                            "schedule_id": str(row.get("id", "")),
+                            "name": row.get("name", ""),
+                            "shift_start": str(row.get("shift_start", "")),
+                            "shift_end": str(row.get("shift_end", ""))
+                        })
+
+                    return schedules
+                except Exception as e:
+                    logger.error(f"Failed to list schedules from Supabase: {e}")
+                    return []
+            else:
+                # Google Sheets - старая логика
+                ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
+                rows = self.sheets._read_table(ws)
+
+                # Группируем по schedule_id
+                schedules = {}
+                for row in rows:
+                    sid = row.get("ScheduleID", "").strip()
+                    if not sid:
+                        continue
+
+                    if sid not in schedules:
+                        schedules[sid] = {
+                            "schedule_id": sid,
+                            "name": row.get("Name", ""),
+                            "shift_start": row.get("ShiftStart", ""),
+                            "shift_end": row.get("ShiftEnd", "")
+                        }
+
+                return list(schedules.values())
+
         except Exception as e:
-            logger.error(f"Failed to list schedules: {e}")
+            logger.error(f"Failed to list schedules: {e}", exc_info=True)
             return []
     
     def delete_schedule(self, schedule_id: str) -> bool:
