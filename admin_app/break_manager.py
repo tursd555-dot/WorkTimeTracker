@@ -939,20 +939,34 @@ class BreakManager:
     ) -> bool:
         """
         Алиас для create_schedule() (обратная совместимость)
-        
+
         Преобразует старый формат slots_data в новый формат limits + windows
         """
         # Группируем слоты по типу
         limits_dict = {}
         windows_list = []
-        
+
         for slot in slots_data:
-            slot_type = slot.get('slot_type', 'Перерыв')
-            duration = slot.get('duration', 15)
+            # Поддерживаем оба ключа: 'type' (из диалога) и 'slot_type' (старый формат)
+            slot_type = slot.get('type') or slot.get('slot_type', 'Перерыв')
+
+            # duration может быть строкой, конвертируем в int
+            duration_raw = slot.get('duration', 15)
+            try:
+                duration = int(duration_raw)
+            except (ValueError, TypeError):
+                duration = 15
+
             window_start = slot.get('window_start', '09:00')
             window_end = slot.get('window_end', '17:00')
-            order = slot.get('order', 1)
-            
+
+            # order может быть строкой, конвертируем в int
+            order_raw = slot.get('order', 1)
+            try:
+                order = int(order_raw)
+            except (ValueError, TypeError):
+                order = 1
+
             # Лимиты
             if slot_type not in limits_dict:
                 limits_dict[slot_type] = {
@@ -961,7 +975,7 @@ class BreakManager:
                     'time_minutes': duration
                 }
             limits_dict[slot_type]['daily_count'] += 1
-            
+
             # Окна
             windows_list.append({
                 'break_type': slot_type,
@@ -969,9 +983,9 @@ class BreakManager:
                 'end': window_end,
                 'priority': order
             })
-        
+
         limits = list(limits_dict.values())
-        
+
         return self.create_schedule(
             schedule_id=schedule_id,
             name=name,

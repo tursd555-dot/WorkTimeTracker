@@ -47,6 +47,34 @@ class SupabaseConfig:
         return cls(url=url, key=key)
 
 
+class WorksheetWrapper:
+    """Обёртка для имитации worksheet объекта Google Sheets"""
+
+    def __init__(self, worksheet_name: str, api_instance):
+        self.name = worksheet_name
+        self._api = api_instance
+
+    def append_row(self, values: list, value_input_option: str = 'USER_ENTERED'):
+        """Добавляет строку в таблицу"""
+        return self._api.append_row(self.name, values, value_input_option)
+
+    def get_all_values(self):
+        """Получает все значения из таблицы"""
+        rows = self._api._read_table(self.name)
+        if not rows:
+            return []
+
+        # Конвертируем словари в списки значений
+        if rows and isinstance(rows[0], dict):
+            # Получаем порядок колонок из первой строки
+            headers = list(rows[0].keys())
+            result = [headers]  # Первая строка - заголовки
+            for row in rows:
+                result.append([row.get(h, '') for h in headers])
+            return result
+        return rows
+
+
 class SupabaseClientWrapper:
     """Обёртка для Supabase Client для совместимости с Google Sheets API"""
 
@@ -109,9 +137,8 @@ class SupabaseAPI:
             return False
     
     def get_worksheet(self, name: str):
-        """Возвращает имя листа для совместимости с sheets_api"""
-        # В Supabase нет worksheet объектов, возвращаем просто имя
-        return name
+        """Возвращает worksheet wrapper для совместимости с sheets_api"""
+        return WorksheetWrapper(name, self)
 
     def _get_ws(self, name: str):
         """Возвращает имя листа для совместимости с sheets_api"""
@@ -119,9 +146,12 @@ class SupabaseAPI:
     
     def _read_table(self, worksheet):
         """Читает данные из таблицы (для совместимости с sheets_api)"""
-        # worksheet в нашем случае - это имя таблицы/листа
+        # worksheet может быть WorksheetWrapper или строкой
         if not worksheet:
             return []
+
+        # Если передан WorksheetWrapper, извлекаем имя
+        worksheet_name = worksheet.name if isinstance(worksheet, WorksheetWrapper) else worksheet
 
         # Маппинг имён листов Google Sheets на таблицы Supabase
         table_mapping = {
@@ -137,7 +167,7 @@ class SupabaseAPI:
         }
 
         # Если worksheet - это строка (имя листа), используем маппинг
-        table_name = table_mapping.get(worksheet, worksheet)
+        table_name = table_mapping.get(worksheet_name, worksheet_name)
 
         try:
             response = self.client.table(table_name).select('*').execute()
@@ -242,6 +272,9 @@ class SupabaseAPI:
         if not worksheet or not values:
             return
 
+        # Если передан WorksheetWrapper, извлекаем имя
+        worksheet_name = worksheet.name if isinstance(worksheet, WorksheetWrapper) else worksheet
+
         # Маппинг имён листов на таблицы
         table_mapping = {
             'Users': 'users',
@@ -255,7 +288,7 @@ class SupabaseAPI:
             'WorkLog': 'work_log',
         }
 
-        table_name = table_mapping.get(worksheet, worksheet)
+        table_name = table_mapping.get(worksheet_name, worksheet_name)
 
         try:
             # Получаем заголовки таблицы для маппинга позиций
