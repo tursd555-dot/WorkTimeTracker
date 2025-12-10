@@ -1019,7 +1019,7 @@ class BreakManager:
                 name,
                 break_type,
                 start_time.strftime("%Y-%m-%d %H:%M:%S"),
-                "",  # EndTime (заполнится при завершении)
+                None,  # EndTime (NULL в БД, заполнится при завершении)
                 start_time.strftime("%Y-%m-%d"),  # Date
                 "Active",  # Status
                 session_id or ""  # SessionID
@@ -1090,23 +1090,39 @@ class BreakManager:
         severity: str,
         details: str
     ):
-        """Логирует нарушение"""
+        """Логирует нарушение в таблицу violations (Supabase schema)"""
         try:
             ws = self.sheets.get_worksheet(self.VIOLATIONS_SHEET)
-            
+
+            # Получаем имя пользователя
+            try:
+                users = self.sheets.get_users()
+                user = next((u for u in users if u.get('Email', '').lower() == email.lower()), None)
+                name = user.get('Name', '') if user else ''
+            except:
+                name = ''
+
+            now = datetime.now()
+
+            # Формат для Supabase: email, name, violation_type, break_type, timestamp,
+            # expected_duration, actual_duration, excess_minutes, date, details
             row = [
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 email,
-                session_id or "",
+                name,
                 violation_type,
-                details,
-                "pending"  # Status
+                None,  # break_type (можно добавить если нужно)
+                now.strftime("%Y-%m-%d %H:%M:%S"),  # timestamp
+                None,  # expected_duration
+                None,  # actual_duration
+                None,  # excess_minutes
+                now.strftime("%Y-%m-%d"),  # date
+                details
             ]
-            
+
             self.sheets._request_with_retry(lambda: ws.append_row(row))
-            
+
             logger.warning(f"Violation logged: {email}, {violation_type}, {severity}")
-            
+
         except Exception as e:
             logger.error(f"Failed to log violation: {e}")
     
