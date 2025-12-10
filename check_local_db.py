@@ -61,19 +61,38 @@ try:
         print(f"\n📊 Таблица 'logs': {count} записей за сегодня")
 
         # Последние 5 записей
-        cursor.execute("""
-            SELECT timestamp, email, status, action_type, synced_to_sheets
-            FROM logs
-            ORDER BY id DESC
-            LIMIT 5
-        """)
+        # Сначала проверяем какие колонки есть
+        cursor.execute("PRAGMA table_info(logs)")
+        log_columns = [col[1] for col in cursor.fetchall()]
+
+        has_synced = 'synced_to_sheets' in log_columns
+
+        if has_synced:
+            cursor.execute("""
+                SELECT timestamp, email, status, action_type, synced_to_sheets
+                FROM logs
+                ORDER BY id DESC
+                LIMIT 5
+            """)
+        else:
+            cursor.execute("""
+                SELECT timestamp, email, status, action_type
+                FROM logs
+                ORDER BY id DESC
+                LIMIT 5
+            """)
+
         rows = cursor.fetchall()
         if rows:
             print("\nПоследние 5 действий:")
             for i, row in enumerate(rows, 1):
-                ts, email, status, action, synced = row
-                sync_status = "✅ Синхр." if synced else "⏳ Не синхр."
-                print(f"  {i}. {ts} | {email} | {status} | {action} | {sync_status}")
+                if has_synced:
+                    ts, email, status, action, synced = row
+                    sync_status = "✅ Синхр." if synced else "⏳ Не синхр."
+                    print(f"  {i}. {ts} | {email} | {status} | {action} | {sync_status}")
+                else:
+                    ts, email, status, action = row
+                    print(f"  {i}. {ts} | {email} | {status} | {action}")
 
     conn.close()
 
