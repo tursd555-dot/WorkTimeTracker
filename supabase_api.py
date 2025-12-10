@@ -69,16 +69,88 @@ class SupabaseAPI:
             return False
     
     def get_worksheet(self, name: str):
-        """Заглушка для совместимости"""
-        return None
-    
+        """Возвращает имя таблицы для совместимости с sheets API"""
+        # Мапинг имен листов Google Sheets на таблицы Supabase
+        sheet_to_table_mapping = {
+            "BreakLog": "break_log",
+            "BreakSchedules": "break_schedules",
+            "UserBreakAssignments": "user_break_assignments",
+            "Violations": "violations",
+            "Users": "users",
+            "Groups": "groups"
+        }
+        return sheet_to_table_mapping.get(name, name.lower())
+
     def _get_ws(self, name: str):
-        """Заглушка для совместимости"""
-        return None
-    
-    def _read_table(self, worksheet):
-        """Заглушка для совместимости"""
-        return []
+        """Алиас для get_worksheet"""
+        return self.get_worksheet(name)
+
+    def _read_table(self, table_name):
+        """
+        Читает все записи из таблицы Supabase
+        Возвращает список словарей в формате совместимом с sheets_api
+        """
+        if not table_name:
+            return []
+
+        try:
+            response = self.client.table(table_name).select('*').execute()
+
+            # Преобразуем данные из Supabase в формат sheets_api
+            result = []
+            for row in response.data:
+                # Преобразуем snake_case в PascalCase для совместимости
+                converted_row = {}
+                for key, value in row.items():
+                    # Специальные маппинги полей
+                    if key == 'email':
+                        converted_row['Email'] = value
+                    elif key == 'name':
+                        converted_row['Name'] = value
+                    elif key == 'break_type':
+                        converted_row['BreakType'] = value
+                    elif key == 'start_time':
+                        # Преобразуем timestamp в строку
+                        if isinstance(value, datetime):
+                            converted_row['StartTime'] = value.isoformat()
+                        else:
+                            converted_row['StartTime'] = value
+                    elif key == 'end_time':
+                        if isinstance(value, datetime):
+                            converted_row['EndTime'] = value.isoformat() if value else ''
+                        else:
+                            converted_row['EndTime'] = value or ''
+                    elif key == 'duration':
+                        converted_row['Duration'] = str(value) if value else ''
+                    elif key == 'status':
+                        converted_row['Status'] = value
+                    elif key == 'session_id':
+                        converted_row['SessionID'] = value
+                    elif key == 'schedule_id':
+                        converted_row['ScheduleID'] = value
+                    elif key == 'violation_type':
+                        converted_row['ViolationType'] = value
+                    elif key == 'timestamp':
+                        if isinstance(value, datetime):
+                            converted_row['Timestamp'] = value.isoformat()
+                        else:
+                            converted_row['Timestamp'] = value
+                    elif key == 'details':
+                        converted_row['Details'] = value
+                    elif key == 'group_name':
+                        converted_row['Group'] = value
+                    else:
+                        # Для других полей просто используем PascalCase
+                        pascal_key = ''.join(word.capitalize() for word in key.split('_'))
+                        converted_row[pascal_key] = value
+
+                result.append(converted_row)
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Failed to read table {table_name}: {e}")
+            return []
     
     def _request_with_retry(self, func, *args, **kwargs):
         """Выполнить с retry"""
