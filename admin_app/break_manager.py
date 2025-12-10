@@ -20,7 +20,7 @@
 from __future__ import annotations
 import logging
 from typing import List, Dict, Optional, Tuple
-from datetime import datetime, time, date
+from datetime import datetime, time, date, timezone
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -1331,7 +1331,12 @@ class BreakManager:
                     if start_time_str:
                         try:
                             start_dt = datetime.fromisoformat(start_time_str)
-                            duration = int((datetime.now() - start_dt).total_seconds() / 60)
+                            # Используем UTC для Supabase (возвращает timezone-aware datetime)
+                            now = datetime.now(timezone.utc)
+                            # Если start_dt naive, добавляем UTC timezone
+                            if start_dt.tzinfo is None:
+                                start_dt = start_dt.replace(tzinfo=timezone.utc)
+                            duration = int((now - start_dt).total_seconds() / 60)
                             
                             # Получаем лимит из графика (или дефолтный)
                             schedule = self.get_user_schedule(email)
