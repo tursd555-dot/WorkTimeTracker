@@ -716,9 +716,23 @@ class SupabaseAPI:
     def set_active_session(self, email: str, name: str, session_id: str, login_time: Optional[str] = None) -> bool:
         """Создать активную сессию"""
         try:
+            email_lower = email.strip().lower()
+
+            # Получаем user_id (требуется для foreign key)
+            user_response = self.client.table('users')\
+                .select('id')\
+                .eq('email', email_lower)\
+                .execute()
+
+            if not user_response.data:
+                logger.error(f"User not found for email: {email_lower}")
+                return False
+
+            user_id = user_response.data[0]['id']
+
             data = {
-                'email': email.strip().lower(),
-                'name': name,
+                'user_id': user_id,
+                'email': email_lower,
                 'session_id': session_id,
                 'login_time': login_time or datetime.now(timezone.utc).isoformat(),
                 'status': 'active',
