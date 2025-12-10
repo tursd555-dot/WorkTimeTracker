@@ -5,6 +5,13 @@ API Adapter - Переключение между Google Sheets и Supabase
 import os
 import logging
 
+# Загружаем переменные окружения из .env файла
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv не установлен
+
 logger = logging.getLogger(__name__)
 
 # ============================================================================

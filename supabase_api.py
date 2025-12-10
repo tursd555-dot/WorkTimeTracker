@@ -8,6 +8,13 @@ from typing import List, Dict, Optional, Any
 from datetime import datetime, date, timezone
 from dataclasses import dataclass
 
+# Загружаем переменные окружения из .env файла
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv не установлен
+
 logger = logging.getLogger(__name__)
 
 try:

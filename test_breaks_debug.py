@@ -3,9 +3,17 @@
 """
 import os
 from datetime import date
+
+# Загружаем переменные окружения из .env файла
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from api_adapter import get_sheets_api
 
-# Устанавливаем переменные окружения если нужно
+# Проверяем переменные окружения
 if not os.getenv('SUPABASE_KEY'):
     print("⚠️ SUPABASE_KEY не установлен!")
     print("Установите переменные окружения или создайте .env файл")
