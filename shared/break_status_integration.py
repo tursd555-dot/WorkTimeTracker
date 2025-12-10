@@ -41,13 +41,15 @@ class BreakStatusIntegration:
         """
         try:
             # Переход НА перерыв
-            if self.is_break_status(new_status) and not self.is_break_status(old_status):
+            if self.is_break_status(new_status):
+                # ВАЖНО: Сначала завершаем ВСЕ активные перерывы
+                # (могут быть висячие перерывы после перезапуска или предыдущего сбоя)
+                self._end_all_breaks(email)
+                # Теперь начинаем новый перерыв
                 return self._start_break(email, new_status, session_id)
 
-            # Переход С перерыва (на любой не-перерывный статус)
-            # ВАЖНО: Завершаем ВСЕ активные перерывы, не только тот тип который был в old_status
-            # Это нужно потому что при перезапуске приложения old_status может быть неизвестен
-            elif not self.is_break_status(new_status):
+            # Переход С перерыва на не-перерывный статус
+            elif self.is_break_status(old_status) and not self.is_break_status(new_status):
                 return self._end_all_breaks(email)
 
             return True
