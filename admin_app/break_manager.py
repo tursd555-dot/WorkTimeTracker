@@ -1387,19 +1387,37 @@ class BreakManager:
                             if start_dt.tzinfo is None:
                                 start_dt = start_dt.replace(tzinfo=timezone.utc)
                             duration = int((now - start_dt).total_seconds() / 60)
-                            
+
                             # Получаем лимит из графика (или дефолтный)
                             schedule = self.get_user_schedule(email)
                             limit_minutes = 15  # Default для перерыва
                             if break_type == "Обед":
                                 limit_minutes = 60
-                            
+
                             if schedule:
                                 limit = next((l for l in schedule.limits if l.break_type == break_type), None)
                                 if limit:
                                     limit_minutes = limit.time_minutes
-                            
-                            is_over_limit = duration > limit_minutes
+
+                            # Проверка 1: Превышение длительности
+                            duration_exceeded = duration > limit_minutes
+
+                            # Проверка 2: Соответствие временному окну
+                            in_time_window = True  # По умолчанию разрешаем (если нет окон)
+                            if schedule and schedule.windows:
+                                # Есть временные окна - проверяем соответствие
+                                start_time_only = start_dt.time()  # Только время (HH:MM:SS)
+                                in_time_window = False  # Теперь требуем попадание в окно
+
+                                for window in schedule.windows:
+                                    if window.break_type == break_type:
+                                        # Используем метод is_within() из BreakWindow
+                                        if window.is_within(start_time_only):
+                                            in_time_window = True
+                                            break
+
+                            # Нарушение если: превышена длительность ИЛИ вне временного окна
+                            is_over_limit = duration_exceeded or not in_time_window
                         except Exception as e:
                             logger.warning(f"Failed to calculate duration for {email}: {e}")
                     
