@@ -36,20 +36,22 @@ class BreakStatusIntegration:
     ) -> bool:
         """
         Обрабатывает смену статуса
-        
+
         Вызывается при каждой смене статуса пользователя
         """
         try:
             # Переход НА перерыв
             if self.is_break_status(new_status) and not self.is_break_status(old_status):
                 return self._start_break(email, new_status, session_id)
-            
-            # Переход С перерыва
-            elif self.is_break_status(old_status) and not self.is_break_status(new_status):
-                return self._end_break(email, old_status)
-            
+
+            # Переход С перерыва (на любой не-перерывный статус)
+            # ВАЖНО: Завершаем ВСЕ активные перерывы, не только тот тип который был в old_status
+            # Это нужно потому что при перезапуске приложения old_status может быть неизвестен
+            elif not self.is_break_status(new_status):
+                return self._end_all_breaks(email)
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Error in status change handler: {e}", exc_info=True)
             return False
@@ -83,24 +85,46 @@ class BreakStatusIntegration:
     def _end_break(self, email: str, status: str) -> bool:
         """Завершает перерыв через BreakManager"""
         break_type = status  # "Перерыв" или "Обед"
-        
+
         logger.info(f"Ending break for {email}: {break_type}")
-        
+
         success, error, duration = self.break_mgr.end_break(
             email=email,
             break_type=break_type
         )
-        
+
         if not success:
             logger.warning(f"Failed to end break for {email}: {error}")
             return False
-        
+
         # Удаляем из активных
         self.active_breaks.pop(email, None)
-        
+
         logger.info(f"Break ended successfully for {email}: {duration} minutes")
         return True
-    
+
+    def _end_all_breaks(self, email: str) -> bool:
+        """
+        Завершает ВСЕ активные перерывы пользователя
+
+        Используется при переходе на не-перерывный статус ("в работе" и т.д.)
+        Работает даже если приложение было перезапущено и self.active_breaks пуст
+        """
+        logger.info(f"Ending all active breaks for {email}")
+
+        # Вызываем метод break_manager который ищет активные перерывы в БД
+        success = self.break_mgr.end_all_active_breaks(email)
+
+        # Очищаем из памяти (на всякий случай)
+        self.active_breaks.pop(email, None)
+
+        if success:
+            logger.info(f"All active breaks ended for {email}")
+        else:
+            logger.debug(f"No active breaks found for {email}")
+
+        return True  # Всегда возвращаем True, даже если не было активных перерывов
+
     def get_active_break(self, email: str) -> Optional[dict]:
         """Получает информацию об активном перерыве"""
         return self.active_breaks.get(email)
@@ -108,41 +132,28 @@ class BreakStatusIntegration:
     def on_logout(self, email: str) -> bool:
         """
         Завершает активный перерыв при logout пользователя
-        
+
         Вызывается при:
         - Принудительном logout из админки
         - Завершении смены пользователем
         - Автоматическом logout
         """
         try:
-            # Проверяем есть ли активный перерыв
-            if email not in self.active_breaks:
-                logger.debug(f"No active break for {email} on logout")
-                return True
-            
-            break_info = self.active_breaks[email]
-            break_type = break_info['break_type']
-            
-            logger.info(f"Auto-ending break on logout for {email}: {break_type}")
-            
-            # Завершаем перерыв
-            success, error, duration = self.break_mgr.end_break(
-                email=email,
-                break_type=break_type
-            )
-            
-            if not success:
-                logger.error(f"Failed to end break on logout for {email}: {error}")
-                # Принудительно удаляем из активных (чтобы не "зависнуть")
-                self.active_breaks.pop(email, None)
-                return False
-            
-            # Удаляем из активных
+            logger.info(f"Auto-ending breaks on logout for {email}")
+
+            # Завершаем ВСЕ активные перерывы (даже если приложение перезапускалось)
+            success = self.break_mgr.end_all_active_breaks(email)
+
+            # Удаляем из памяти
             self.active_breaks.pop(email, None)
-            
-            logger.info(f"Break auto-ended on logout for {email}: {duration} minutes")
+
+            if success:
+                logger.info(f"Break(s) auto-ended on logout for {email}")
+            else:
+                logger.debug(f"No active breaks on logout for {email}")
+
             return True
-            
+
         except Exception as e:
             logger.error(f"Error in logout handler for {email}: {e}", exc_info=True)
             # Принудительно удаляем из активных

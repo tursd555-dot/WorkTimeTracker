@@ -820,7 +820,57 @@ class BreakManager:
         except Exception as e:
             logger.error(f"Failed to end break: {e}", exc_info=True)
             return False, f"Ошибка: {str(e)}", None
-    
+
+    def end_all_active_breaks(self, email: str) -> bool:
+        """
+        Завершает ВСЕ активные перерывы пользователя (любого типа)
+
+        Используется при:
+        - Смене статуса на не-перерывный ("в работе" и т.д.)
+        - Завершении смены
+        - Принудительном logout
+
+        Args:
+            email: Email пользователя
+
+        Returns:
+            bool: True если хотя бы один перерыв был завершен
+        """
+        try:
+            ws = self.sheets.get_worksheet(self.USAGE_LOG_SHEET)
+            rows = self.sheets._read_table(ws)
+
+            today = date.today().isoformat()
+            ended_count = 0
+
+            # Находим ВСЕ активные перерывы пользователя за сегодня
+            for row in reversed(rows):
+                if (row.get("Email", "").lower() == email.lower() and
+                    not row.get("EndTime") and
+                    row.get("StartTime", "").startswith(today)):
+
+                    break_type = row.get("BreakType", "Перерыв")
+                    logger.info(f"Auto-ending active break for {email}: {break_type}")
+
+                    # Завершаем этот перерыв
+                    success, error, duration = self.end_break(email, break_type)
+                    if success:
+                        ended_count += 1
+                        logger.info(f"✅ Ended {break_type} for {email}: {duration} min")
+                    else:
+                        logger.warning(f"❌ Failed to end {break_type} for {email}: {error}")
+
+            if ended_count > 0:
+                logger.info(f"Ended {ended_count} active break(s) for {email}")
+                return True
+            else:
+                logger.debug(f"No active breaks to end for {email}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to end all active breaks for {email}: {e}", exc_info=True)
+            return False
+
     def get_break_status(self, email: str) -> Dict:
         """
         Получает текущий статус перерывов пользователя

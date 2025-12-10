@@ -394,7 +394,10 @@ class BreakAnalyticsTab(QWidget):
             # Получаем активные перерывы
             active_breaks = self._get_active_breaks()
             self.dashboard_active_breaks_data = active_breaks  # Сохраняем для клика
-            self.dashboard_active_breaks_label.setText(f"{len(active_breaks)} человек")
+
+            # Считаем уникальных пользователей (не записи!)
+            unique_users_on_break = set(b.get('Email') for b in active_breaks if b.get('Email'))
+            self.dashboard_active_breaks_label.setText(f"{len(unique_users_on_break)} человек")
             
             # Нарушений сегодня
             today = date.today().isoformat()
