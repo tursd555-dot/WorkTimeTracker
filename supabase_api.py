@@ -569,7 +569,10 @@ class SupabaseAPI:
     # ========================================================================
     
     def get_user_by_email(self, email: str) -> Optional[Dict[str, str]]:
-        """Получить пользователя по email"""
+        """
+        Получить пользователя по email.
+        Возвращает данные в формате, совместимом с sheets_api.py
+        """
         try:
             email_lower = (email or "").strip().lower()
             response = self.client.table('users')\
@@ -579,19 +582,29 @@ class SupabaseAPI:
             
             if response.data:
                 row = response.data[0]
+                # Возвращаем в формате, совместимом с sheets_api.py
                 return {
-                    'Email': row.get('email', ''),
+                    # Ключи в нижнем регистре для совместимости с login_window.py
+                    'email': email_lower,
+                    'name': row.get('name', ''),
+                    'role': row.get('role', 'специалист'),
+                    'shift_hours': row.get('shift_hours', '8 часов'),
+                    'telegram_login': row.get('telegram_id', ''),
+                    'group': row.get('group_name', ''),
+                    # Также возвращаем в формате с заглавными буквами для совместимости
+                    'Email': email_lower,
                     'Name': row.get('name', ''),
                     'Phone': row.get('phone', ''),
-                    'Role': row.get('role', ''),
+                    'Role': row.get('role', 'специалист'),
                     'Telegram': row.get('telegram_id', ''),
                     'Group': row.get('group_name', ''),
+                    'ShiftHours': row.get('shift_hours', '8 часов'),
                     'NotifyTelegram': 'Yes' if row.get('notify_telegram') else 'No'
                 }
             return None
             
         except Exception as e:
-            logger.error(f"Failed to get user by email {email}: {e}")
+            logger.error(f"Failed to get user by email {email}: {e}", exc_info=True)
             return None
     
     def delete_user(self, email: str) -> bool:
