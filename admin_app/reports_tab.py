@@ -655,12 +655,12 @@ class ReportsTab(QWidget):
             total_sessions = 0
             
             for row, (email, data) in enumerate(sorted_employees):
-                total_hours = data['total_seconds'] // 3600
-                total_mins = (data['total_seconds'] % 3600) // 60
+                total_hours = int(data['total_seconds'] // 3600)
+                total_mins = int((data['total_seconds'] % 3600) // 60)
                 total_time_str = f"{total_hours}:{total_mins:02d}"
                 
-                productive_hours = data['productive_seconds'] // 3600
-                productive_mins = (data['productive_seconds'] % 3600) // 60
+                productive_hours = int(data['productive_seconds'] // 3600)
+                productive_mins = int((data['productive_seconds'] % 3600) // 60)
                 productive_time_str = f"{productive_hours}:{productive_mins:02d}"
                 
                 productivity_percent = (data['productive_seconds'] / data['total_seconds'] * 100) if data['total_seconds'] > 0 else 0
@@ -686,12 +686,12 @@ class ReportsTab(QWidget):
                 self.employees_table.setCellWidget(row, 7, details_btn)
             
             # Обновляем карточки
-            total_hours = total_time // 3600
-            total_mins = (total_time % 3600) // 60
+            total_hours = int(total_time // 3600)
+            total_mins = int((total_time % 3600) // 60)
             self.emp_total_time_card.findChild(QLabel).setText(f"{total_hours}:{total_mins:02d}")
             
-            prod_hours = total_productive // 3600
-            prod_mins = (total_productive % 3600) // 60
+            prod_hours = int(total_productive // 3600)
+            prod_mins = int((total_productive % 3600) // 60)
             self.emp_productive_card.findChild(QLabel).setText(f"{prod_hours}:{prod_mins:02d}")
             
             avg_productivity = (total_productive / total_time * 100) if total_time > 0 else 0
@@ -775,13 +775,13 @@ class ReportsTab(QWidget):
             
             for row, (group_name, data) in enumerate(sorted_groups):
                 employees_count = len(data['employees'])
-                total_hours = data['total_seconds'] // 3600
-                total_mins = (data['total_seconds'] % 3600) // 60
+                total_hours = int(data['total_seconds'] // 3600)
+                total_mins = int((data['total_seconds'] % 3600) // 60)
                 total_time_str = f"{total_hours}:{total_mins:02d}"
                 
                 avg_seconds = data['total_seconds'] // employees_count if employees_count > 0 else 0
-                avg_hours = avg_seconds // 3600
-                avg_mins = (avg_seconds % 3600) // 60
+                avg_hours = int(avg_seconds // 3600)
+                avg_mins = int((avg_seconds % 3600) // 60)
                 avg_time_str = f"{avg_hours}:{avg_mins:02d}"
                 
                 productivity_percent = (data['productive_seconds'] / data['total_seconds'] * 100) if data['total_seconds'] > 0 else 0
@@ -802,13 +802,13 @@ class ReportsTab(QWidget):
                 self.groups_table.setCellWidget(row, 6, details_btn)
             
             # Обновляем карточки
-            total_hours = total_time // 3600
-            total_mins = (total_time % 3600) // 60
+            total_hours = int(total_time // 3600)
+            total_mins = int((total_time % 3600) // 60)
             self.grp_total_time_card.findChild(QLabel).setText(f"{total_hours}:{total_mins:02d}")
             
             avg_total = total_time // len(groups_data) if groups_data else 0
-            avg_hours = avg_total // 3600
-            avg_mins = (avg_total % 3600) // 60
+            avg_hours = int(avg_total // 3600)
+            avg_mins = int((avg_total % 3600) // 60)
             self.grp_avg_time_card.findChild(QLabel).setText(f"{avg_hours}:{avg_mins:02d}")
             
             avg_productivity = (total_productive / total_time * 100) if total_time > 0 else 0
@@ -873,8 +873,8 @@ class ReportsTab(QWidget):
             self.statuses_table.setRowCount(len(sorted_statuses))
             
             for row, (status, data) in enumerate(sorted_statuses):
-                hours = data['seconds'] // 3600
-                mins = (data['seconds'] % 3600) // 60
+                hours = int(data['seconds'] // 3600)
+                mins = int((data['seconds'] % 3600) // 60)
                 time_str = f"{hours}:{mins:02d}"
                 
                 percent = (data['seconds'] / total_seconds * 100) if total_seconds > 0 else 0
@@ -966,8 +966,8 @@ class ReportsTab(QWidget):
             self.productivity_table.setRowCount(len(sorted_employees))
             
             for row, (email, data) in enumerate(sorted_employees):
-                prod_hours = data['productive_seconds'] // 3600
-                prod_mins = (data['productive_seconds'] % 3600) // 60
+                prod_hours = int(data['productive_seconds'] // 3600)
+                prod_mins = int((data['productive_seconds'] % 3600) // 60)
                 prod_time_str = f"{prod_hours}:{prod_mins:02d}"
                 
                 productivity_percent = (data['productive_seconds'] / data['total_seconds'] * 100) if data['total_seconds'] > 0 else 0
@@ -989,16 +989,16 @@ class ReportsTab(QWidget):
                     self.productivity_table.setItem(0, col, QTableWidgetItem(""))
             
             # Обновляем карточки
-            prod_hours = productive_seconds // 3600
-            prod_mins = (productive_seconds % 3600) // 60
+            prod_hours = int(productive_seconds // 3600)
+            prod_mins = int((productive_seconds % 3600) // 60)
             self.prod_total_card.findChild(QLabel).setText(f"{prod_hours}:{prod_mins:02d}")
             
             productivity_percent = (productive_seconds / total_seconds * 100) if total_seconds > 0 else 0
             self.prod_percent_card.findChild(QLabel).setText(f"{productivity_percent:.1f}%")
             
             avg_productive = productive_seconds // len(employees_data) if employees_data else 0
-            avg_hours = avg_productive // 3600
-            avg_mins = (avg_productive % 3600) // 60
+            avg_hours = int(avg_productive // 3600)
+            avg_mins = int((avg_productive % 3600) // 60)
             self.prod_avg_card.findChild(QLabel).setText(f"{avg_hours}:{avg_mins:02d}")
             
             total_sessions = sum(len(d['sessions']) for d in employees_data.values())
@@ -1121,8 +1121,8 @@ class ReportsTab(QWidget):
             self.breaks_table.setRowCount(len(employees_data))
             
             for row, (email, data) in enumerate(sorted(employees_data.items(), key=lambda x: x[1]['breaks_count'], reverse=True)):
-                break_hours = data['break_seconds'] // 3600
-                break_mins = (data['break_seconds'] % 3600) // 60
+                break_hours = int(data['break_seconds'] // 3600)
+                break_mins = int((data['break_seconds'] % 3600) // 60)
                 break_time_str = f"{break_hours}:{break_mins:02d}"
                 
                 avg_break_seconds = data['break_seconds'] // data['breaks_count'] if data['breaks_count'] > 0 else 0
@@ -1144,8 +1144,8 @@ class ReportsTab(QWidget):
             # Обновляем карточки
             self.brk_total_card.findChild(QLabel).setText(str(total_breaks))
             
-            total_hours = total_break_seconds // 3600
-            total_mins = (total_break_seconds % 3600) // 60
+            total_hours = int(total_break_seconds // 3600)
+            total_mins = int((total_break_seconds % 3600) // 60)
             self.brk_time_card.findChild(QLabel).setText(f"{total_hours}:{total_mins:02d}")
             
             avg_break_seconds = total_break_seconds // total_breaks if total_breaks > 0 else 0
