@@ -790,7 +790,15 @@ class EmployeeApp(QWidget):
             logger.error(f"Error ending break on close: {e}")
         
         """Обработка закрытия через крестик"""
-        # Автозавершение активного перерыва
+        # Автозавершение активного перерыва при закрытии приложения
+        try:
+            from shared.break_status_integration import on_logout
+            logger.info(f"Closing application, auto-ending active break for {self.email}")
+            on_logout(self.email)  # Завершает перерыв независимо от текущего статуса
+        except Exception as e:
+            logger.error(f"Error ending break on close: {e}")
+        
+        # Также завершаем перерыв через смену статуса, если текущий статус - перерыв
         if hasattr(self, 'current_status') and self.current_status in ["Перерыв", "Обед"]:
             try:
                 logger.info(f"Auto-ending break on close: {self.current_status}")
