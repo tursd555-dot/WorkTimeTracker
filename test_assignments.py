@@ -44,6 +44,45 @@ try:
                             print(f"    {key}: {value}")
                 else:
                     print(f"  Таблица пуста")
+                
+                # Пробуем создать тестовую запись
+                print(f"\n2. ТЕСТ СОЗДАНИЯ НАЗНАЧЕНИЯ")
+                print("-" * 80)
+                test_data_variants = [
+                    {
+                        'email': 'test@example.com',
+                        'schedule_id': 'TEST_SCHEDULE',
+                        'effective_date': '2025-12-11',
+                        'assigned_by': 'admin'
+                    },
+                    {
+                        'user_email': 'test@example.com',
+                        'break_schedule_id': 'TEST_SCHEDULE',
+                        'effective_date': '2025-12-11',
+                        'assigned_by': 'admin'
+                    },
+                    {
+                        'email': 'test@example.com',
+                        'schedule_name': 'TEST_SCHEDULE',
+                        'effective_date': '2025-12-11',
+                        'assigned_by': 'admin'
+                    }
+                ]
+                
+                for i, test_data in enumerate(test_data_variants, 1):
+                    try:
+                        print(f"\nПопытка {i}: {test_data}")
+                        response = api.client.table(table_name).insert(test_data).execute()
+                        print(f"✅ Успешно создано назначение!")
+                        # Удаляем тестовую запись
+                        if response.data and 'id' in response.data[0]:
+                            api.client.table(table_name).delete().eq('id', response.data[0]['id']).execute()
+                            print(f"✅ Тестовая запись удалена")
+                        break
+                    except Exception as e:
+                        print(f"❌ Ошибка: {e}")
+                        continue
+                        
             except Exception as e:
                 print(f"❌ Таблица {table_name} не найдена или ошибка: {e}")
     else:
