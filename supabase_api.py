@@ -254,33 +254,50 @@ class SupabaseAPI:
                     # Нужно найти UUID шаблона по его имени или ID
                     schedule_uuid = None
                     try:
+                        logger.info(f"[ASSIGNMENT] Looking for schedule: {schedule_id_or_name}")
+                        
                         # Пробуем найти шаблон по id (если это уже UUID)
                         try:
                             response = self.client.table('break_schedules')\
-                                .select('id')\
+                                .select('id, name')\
                                 .eq('id', schedule_id_or_name)\
                                 .execute()
                             if response.data:
                                 schedule_uuid = response.data[0]['id']
-                                logger.debug(f"Found schedule by UUID: {schedule_uuid}")
-                        except Exception:
+                                schedule_name = response.data[0].get('name', schedule_id_or_name)
+                                logger.info(f"[ASSIGNMENT] ✅ Found schedule by UUID: {schedule_uuid} (name: {schedule_name})")
+                        except Exception as uuid_error:
+                            logger.debug(f"[ASSIGNMENT] Not a UUID or UUID lookup failed: {uuid_error}")
                             pass
                         
                         # Если не нашли по UUID, пробуем найти по имени
                         if not schedule_uuid:
+                            logger.info(f"[ASSIGNMENT] Trying to find schedule by name: {schedule_id_or_name}")
                             response = self.client.table('break_schedules')\
-                                .select('id')\
+                                .select('id, name')\
                                 .eq('name', schedule_id_or_name)\
                                 .execute()
                             if response.data:
                                 schedule_uuid = response.data[0]['id']
-                                logger.debug(f"Found schedule by name '{schedule_id_or_name}': {schedule_uuid}")
+                                schedule_name = response.data[0].get('name', schedule_id_or_name)
+                                logger.info(f"[ASSIGNMENT] ✅ Found schedule by name '{schedule_id_or_name}': UUID={schedule_uuid}")
+                            else:
+                                logger.warning(f"[ASSIGNMENT] ⚠️ Schedule not found by name: {schedule_id_or_name}")
                         
                         if not schedule_uuid:
-                            logger.error(f"Schedule not found: {schedule_id_or_name}")
+                            logger.error(f"[ASSIGNMENT] ❌ Schedule not found: {schedule_id_or_name}")
+                            # Пробуем найти все шаблоны для отладки
+                            try:
+                                all_schedules = self.client.table('break_schedules')\
+                                    .select('id, name')\
+                                    .limit(10)\
+                                    .execute()
+                                logger.info(f"[ASSIGNMENT] Available schedules: {[(s.get('name'), s.get('id')) for s in all_schedules.data]}")
+                            except Exception:
+                                pass
                             return False
                     except Exception as e:
-                        logger.error(f"Failed to find schedule UUID: {e}", exc_info=True)
+                        logger.error(f"[ASSIGNMENT] ❌ Failed to find schedule UUID: {e}", exc_info=True)
                         return False
                     
                     # Создаём назначение с UUID шаблона
