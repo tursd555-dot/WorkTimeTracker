@@ -383,27 +383,47 @@ class BreakManager:
                                 continue
                         
                         if assignment_id:
-                            # Пробуем разные варианты полей для обновления
-                            update_variants = [
-                                {'schedule_id': schedule_id},
-                                {'schedule_name': schedule_id},
-                                {'break_schedule_id': schedule_id}
-                            ]
-                            
-                            for update_data in update_variants:
+                            # Нужно найти UUID шаблона по его имени или ID
+                            schedule_uuid = None
+                            try:
+                                # Пробуем найти шаблон по id (если это уже UUID)
                                 try:
-                                    self.sheets.client.table('user_break_assignments')\
-                                        .update(update_data)\
-                                        .eq('id', assignment_id)\
+                                    find_schedule = self.sheets.client.table('break_schedules')\
+                                        .select('id')\
+                                        .eq('id', schedule_id)\
                                         .execute()
-                                    logger.info(f"Updated schedule assignment for {email}")
-                                    return True
-                                except Exception as update_error:
-                                    logger.debug(f"Update failed with {update_data}: {update_error}")
-                                    continue
+                                    if find_schedule.data:
+                                        schedule_uuid = find_schedule.data[0]['id']
+                                except Exception:
+                                    pass
+                                
+                                # Если не нашли по UUID, пробуем найти по имени
+                                if not schedule_uuid:
+                                    find_schedule = self.sheets.client.table('break_schedules')\
+                                        .select('id')\
+                                        .eq('name', schedule_id)\
+                                        .execute()
+                                    if find_schedule.data:
+                                        schedule_uuid = find_schedule.data[0]['id']
+                                
+                                if not schedule_uuid:
+                                    logger.error(f"Schedule not found for update: {schedule_id}")
+                                    return False
+                            except Exception as e:
+                                logger.error(f"Failed to find schedule UUID: {e}", exc_info=True)
+                                return False
                             
-                            logger.error(f"Failed to update assignment: all variants failed")
-                            return False
+                            # Обновляем назначение с UUID шаблона
+                            try:
+                                self.sheets.client.table('user_break_assignments')\
+                                    .update({'schedule_id': schedule_uuid})\
+                                    .eq('id', assignment_id)\
+                                    .execute()
+                                logger.info(f"Updated schedule assignment for {email}")
+                                return True
+                            except Exception as update_error:
+                                logger.error(f"Failed to update assignment: {update_error}", exc_info=True)
+                                return False
                         else:
                             logger.error(f"Assignment not found for {email}")
                             return False
