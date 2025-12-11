@@ -126,7 +126,7 @@ class SyncManager(QObject):
         try:
             logger.info(f"Проверка статуса сессии для пользователя {email}, session_id: {session_id}")
             remote_status = self._check_user_session_status(email, session_id)
-            logger.debug(f"Получен удаленный статус: {remote_status}")
+            logger.info(f"Получен удаленный статус: {remote_status}")  # Изменено с DEBUG на INFO для отладки
             
             if remote_status == "kicked":
                 logger.info(f"[ADMIN_LOGOUT] Обнаружен статус 'kicked' для пользователя {email}. Испускаем force_logout.")
