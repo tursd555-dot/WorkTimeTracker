@@ -380,7 +380,10 @@ class SupabaseAPI:
                 .execute()
 
             if response.data:
-                return response.data[0].get('status', 'unknown')
+                status = response.data[0].get('status', 'unknown')
+                if status in ('kicked', 'finished'):
+                    logger.info(f"🚨 Session {session_id} has status: {status}")
+                return status
             return 'unknown'
         except Exception as e:
             logger.error(f"Failed to check session status: {e}")
@@ -420,13 +423,17 @@ class SupabaseAPI:
                 'status': 'kicked'  # gui.py проверяет 'kicked' или 'finished'
             }
 
-            self.client.table('work_sessions')\
+            # Логируем какие сессии будем обновлять
+            session_ids = [s.get('session_id') for s in check.data]
+            logger.info(f"🔄 Updating sessions to 'kicked': {session_ids}")
+
+            result = self.client.table('work_sessions')\
                 .update(data)\
                 .eq('email', em)\
                 .eq('status', 'active')\
                 .execute()
 
-            logger.info(f"✅ Force logout completed for {em}")
+            logger.info(f"✅ Force logout completed for {em}, updated {len(result.data)} sessions")
             return True
 
         except Exception as e:
