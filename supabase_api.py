@@ -339,6 +339,8 @@ class SupabaseAPI:
             }
             
             # Ищем активные сессии пользователя в work_sessions (active_sessions - это VIEW)
+            logger.debug(f"Searching for active session: email={email_lower}, session_id={session_id}")
+            
             query = self.client.table('work_sessions')\
                 .select('*')\
                 .eq('email', email_lower)\
@@ -350,8 +352,21 @@ class SupabaseAPI:
             
             response = query.order('login_time', desc=True).execute()
             
+            logger.debug(f"Found {len(response.data)} sessions for {email_lower}")
+            
             if not response.data:
-                logger.info(f"No active session found for {email}")
+                # Попробуем найти любые сессии этого пользователя (для отладки)
+                all_sessions = self.client.table('work_sessions')\
+                    .select('*')\
+                    .eq('email', email_lower)\
+                    .order('login_time', desc=True)\
+                    .limit(5)\
+                    .execute()
+                
+                logger.warning(f"No active session found for {email}. Found {len(all_sessions.data)} total sessions:")
+                for s in all_sessions.data:
+                    logger.warning(f"  Session: id={s.get('id')}, session_id={s.get('session_id')}, status={s.get('status')}, email={s.get('email')}")
+                
                 return False
             
             # Берем последнюю активную сессию
