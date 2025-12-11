@@ -408,6 +408,111 @@ class ReportsTab(QWidget):
         card.setMinimumHeight(80)
         return card
     
+    def _calculate_time_from_logs(self, logs: List[Dict]) -> Dict[str, any]:
+        """
+        Вычисляет время работы из логов статусов.
+        
+        Возвращает словарь с ключами:
+        - total_seconds: общее время в секундах
+        - productive_seconds: продуктивное время (статусы: В работе, На задаче, Чат, Запись, Стоматология, Входящие, Почта)
+        - statuses: словарь {статус: секунды}
+        - sessions: множество session_id
+        """
+        result = {
+            'total_seconds': 0,
+            'productive_seconds': 0,
+            'statuses': defaultdict(int),
+            'sessions': set()
+        }
+        
+        # Фильтруем только записи со статусами или важными action_type
+        filtered_logs = []
+        for log_entry in logs:
+            status = log_entry.get('status', '')
+            action_type = log_entry.get('action_type', '')
+            if status or action_type in ['STATUS_CHANGE', 'LOGIN']:
+                filtered_logs.append(log_entry)
+        
+        if not filtered_logs:
+            return result
+        
+        # Сортируем по timestamp
+        sorted_logs = sorted(filtered_logs, key=lambda x: x.get('timestamp', ''))
+        
+        # Продуктивные статусы
+        productive_statuses = {
+            'В работе', 'На задаче', 'Чат', 'Запись', 
+            'Стоматология', 'Входящие', 'Почта'
+        }
+        
+        # Обрабатываем логи для расчета времени
+        for i, log_entry in enumerate(sorted_logs):
+            timestamp_str = log_entry.get('timestamp', '')
+            status = log_entry.get('status', '')
+            session_id = log_entry.get('session_id', '')
+            
+            if session_id:
+                result['sessions'].add(session_id)
+            
+            if not timestamp_str or not status:
+                continue
+            
+            # Парсим timestamp (поддерживаем разные форматы ISO)
+            try:
+                # Очищаем timestamp от лишних символов
+                clean_timestamp = timestamp_str.replace('Z', '+00:00')
+                if 'T' in clean_timestamp:
+                    # ISO формат с T
+                    if '+' not in clean_timestamp and '-' in clean_timestamp[-6:]:
+                        # Может быть формат без явного timezone
+                        clean_timestamp = clean_timestamp + '+00:00'
+                    dt = datetime.fromisoformat(clean_timestamp)
+                else:
+                    # Старый формат без T
+                    dt = datetime.strptime(clean_timestamp[:19], '%Y-%m-%d %H:%M:%S')
+            except Exception as e:
+                logger.warning(f"Failed to parse timestamp '{timestamp_str}': {e}")
+                continue
+            
+            # Вычисляем длительность до следующей записи или до конца периода
+            if i < len(sorted_logs) - 1:
+                next_timestamp_str = sorted_logs[i + 1].get('timestamp', '')
+                if next_timestamp_str:
+                    try:
+                        clean_next = next_timestamp_str.replace('Z', '+00:00')
+                        if 'T' in clean_next:
+                            if '+' not in clean_next and '-' in clean_next[-6:]:
+                                clean_next = clean_next + '+00:00'
+                            next_dt = datetime.fromisoformat(clean_next)
+                        else:
+                            next_dt = datetime.strptime(next_timestamp_str[:19], '%Y-%m-%d %H:%M:%S')
+                        
+                        duration = (next_dt - dt).total_seconds()
+                        
+                        # Проверка на разумность (от 1 секунды до 8 часов)
+                        if duration < 1:
+                            duration = 1  # Минимум 1 секунда
+                        elif duration > 28800:  # 8 часов
+                            duration = 60  # По умолчанию 1 минута для подозрительных записей
+                    except Exception as e:
+                        logger.warning(f"Failed to parse next timestamp '{next_timestamp_str}': {e}")
+                        duration = 60  # По умолчанию 1 минута
+                else:
+                    duration = 60  # По умолчанию 1 минута
+            else:
+                # Последняя запись - по умолчанию 1 минута
+                duration = 60
+            
+            # Добавляем время к статусу
+            result['statuses'][status] += duration
+            result['total_seconds'] += duration
+            
+            # Если статус продуктивный, добавляем к продуктивному времени
+            if status in productive_statuses:
+                result['productive_seconds'] += duration
+        
+        return result
+    
     def _load_initial_data(self):
         """Загружает начальные данные (списки сотрудников и групп)"""
         try:
