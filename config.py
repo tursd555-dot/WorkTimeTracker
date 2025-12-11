@@ -23,12 +23,9 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 USE_SUPABASE = True  # True = Supabase, False = Google Sheets
 
 if USE_SUPABASE:
-    import os
-    
-    # Настройка переменных окружения для Supabase
-    os.environ.setdefault("SUPABASE_URL", "https://jtgaobxbwibjcvasefzi.supabase.co")
-    os.environ.setdefault("SUPABASE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp0Z2FvYnhid2liamN2YXNlZnppIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUyNTc2OTYsImV4cCI6MjA4MDgzMzY5Nn0.77rTr_FlXfDA8IpwW-deJGJF9nU9oUAufKv5BTGbApk")  # Замените!
-    
+    # Credentials загружаются из .env файла через load_dotenv()
+    # SUPABASE_URL и SUPABASE_KEY должны быть установлены в .env
+
     # Импортируем Supabase API вместо Sheets API
     from supabase_api import get_supabase_api
     
