@@ -203,16 +203,52 @@ class SupabaseAPI:
             if table_name == "user_break_assignments":
                 # Формат: [email, schedule_id, effective_date, assigned_by]
                 if len(values) >= 4:
-                    data = {
-                        'email': str(values[0]).lower(),
-                        'schedule_id': str(values[1]),  # Может быть UUID или имя шаблона
-                        'effective_date': str(values[2]) if values[2] else None,
-                        'assigned_by': str(values[3]) if values[3] else None
-                    }
-                    logger.info(f"Inserting assignment into {table_name}: {data}")
-                    response = self.client.table(table_name).insert(data).execute()
-                    logger.info(f"Insert successful: {len(response.data)} rows inserted")
-                    return True
+                    # Пробуем разные варианты названий полей в зависимости от структуры таблицы
+                    email_val = str(values[0]).lower() if values[0] else None
+                    schedule_id_val = str(values[1]) if values[1] else None
+                    effective_date_val = str(values[2]) if values[2] else None
+                    assigned_by_val = str(values[3]) if values[3] else None
+                    
+                    # Пробуем разные варианты структуры данных
+                    data_variants = [
+                        {
+                            'email': email_val,
+                            'schedule_id': schedule_id_val,
+                            'effective_date': effective_date_val,
+                            'assigned_by': assigned_by_val
+                        },
+                        {
+                            'user_email': email_val,
+                            'break_schedule_id': schedule_id_val,
+                            'effective_date': effective_date_val,
+                            'assigned_by': assigned_by_val
+                        },
+                        {
+                            'email': email_val,
+                            'schedule_name': schedule_id_val,  # Если хранится имя, а не ID
+                            'effective_date': effective_date_val,
+                            'assigned_by': assigned_by_val
+                        }
+                    ]
+                    
+                    for data in data_variants:
+                        try:
+                            logger.info(f"Trying to insert assignment into {table_name}: {data}")
+                            response = self.client.table(table_name).insert(data).execute()
+                            logger.info(f"✅ Insert successful: {len(response.data)} rows inserted")
+                            return True
+                        except Exception as insert_error:
+                            error_str = str(insert_error)
+                            # Если ошибка из-за отсутствующего поля, пробуем следующий вариант
+                            if 'column' in error_str.lower() or 'field' in error_str.lower():
+                                logger.debug(f"Field mismatch, trying next variant: {insert_error}")
+                                continue
+                            else:
+                                # Другая ошибка - пробрасываем
+                                raise
+                    
+                    logger.error(f"Failed to insert assignment: all variants failed")
+                    return False
                 else:
                     logger.error(f"Invalid values length: {len(values)}, expected 4")
                     return False
