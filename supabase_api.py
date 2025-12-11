@@ -185,6 +185,21 @@ class SupabaseAPI:
                             except Exception as e:
                                 logger.debug(f"Could not find schedule name for UUID {row.get('schedule_id')}: {e}")
                                 formatted_row['ScheduleID'] = row.get('schedule_id', '')
+                    elif table_name == "break_log":
+                        key_mapping = {
+                            'id': 'Id',
+                            'email': 'Email',
+                            'name': 'Name',
+                            'break_type': 'BreakType',
+                            'start_time': 'StartTime',
+                            'end_time': 'EndTime',
+                            'duration_minutes': 'Duration',
+                            'date': 'Date',
+                            'status': 'Status',
+                            'session_id': 'SessionID',
+                            'created_at': 'CreatedAt',
+                            'updated_at': 'UpdatedAt',
+                        }
                     pascal_key = key_mapping.get(key)
                     if not pascal_key:
                         # Общий случай: snake_case -> PascalCase
@@ -419,6 +434,90 @@ class SupabaseAPI:
                     return False
                 else:
                     logger.error(f"Invalid values length: {len(values)}, expected 9")
+                    return False
+            elif table_name == "break_log":
+                # Формат: [email, name, break_type, start_time, end_time, duration, date, status]
+                # Формат из break_manager._log_break_start: Email, Name, BreakType, StartTime, EndTime, Duration, Date, Status
+                if len(values) >= 8:
+                    try:
+                        from datetime import datetime
+                        email_val = str(values[0]).lower() if values[0] else None
+                        name_val = str(values[1]) if len(values) > 1 and values[1] else None
+                        break_type_val = str(values[2]) if len(values) > 2 and values[2] else None
+                        start_time_str = str(values[3]) if len(values) > 3 and values[3] else None
+                        end_time_str = str(values[4]) if len(values) > 4 and values[4] else None
+                        duration_val = str(values[5]) if len(values) > 5 and values[5] else None
+                        date_str = str(values[6]) if len(values) > 6 else None
+                        status_val = str(values[7]) if len(values) > 7 else "Active"
+                        
+                        if not email_val or not break_type_val or not start_time_str:
+                            logger.error(f"Missing required fields for break_log: email={email_val}, break_type={break_type_val}, start_time={start_time_str}")
+                            return False
+                        
+                        # Преобразуем start_time в ISO формат с timezone
+                        try:
+                            # Пробуем разные форматы времени
+                            if 'T' in start_time_str or '+' in start_time_str or start_time_str.endswith('Z'):
+                                # Уже в ISO формате
+                                start_time_iso = start_time_str
+                            else:
+                                # Формат "YYYY-MM-DD HH:MM:SS" -> преобразуем в ISO
+                                dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
+                                start_time_iso = dt.isoformat() + "Z"
+                        except ValueError:
+                            try:
+                                dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M")
+                                start_time_iso = dt.isoformat() + "Z"
+                            except ValueError:
+                                logger.error(f"Invalid start_time format: {start_time_str}")
+                                return False
+                        
+                        # Преобразуем end_time если есть
+                        end_time_iso = None
+                        if end_time_str and end_time_str.strip():
+                            try:
+                                if 'T' in end_time_str or '+' in end_time_str or end_time_str.endswith('Z'):
+                                    end_time_iso = end_time_str
+                                else:
+                                    dt = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M:%S")
+                                    end_time_iso = dt.isoformat() + "Z"
+                            except ValueError:
+                                pass
+                        
+                        # Преобразуем duration
+                        duration_minutes = None
+                        if duration_val and duration_val.strip():
+                            try:
+                                duration_minutes = int(duration_val)
+                            except ValueError:
+                                pass
+                        
+                        # Преобразуем date
+                        date_iso = date_str if date_str else datetime.now().strftime("%Y-%m-%d")
+                        
+                        data = {
+                            'email': email_val,
+                            'name': name_val,
+                            'break_type': break_type_val,
+                            'start_time': start_time_iso,
+                            'date': date_iso,
+                            'status': status_val
+                        }
+                        
+                        if end_time_iso:
+                            data['end_time'] = end_time_iso
+                        if duration_minutes is not None:
+                            data['duration_minutes'] = duration_minutes
+                        
+                        logger.info(f"Inserting break_log: email={email_val}, break_type={break_type_val}, start_time={start_time_iso}")
+                        response = self.client.table(table_name).insert(data).execute()
+                        logger.info(f"✅ Break log insert successful: {len(response.data)} rows inserted")
+                        return True
+                    except Exception as e:
+                        logger.error(f"Failed to insert break_log: {e}", exc_info=True)
+                        return False
+                else:
+                    logger.error(f"Invalid values length: {len(values)}, expected at least 8")
                     return False
             else:
                 # Для других таблиц пока не реализовано

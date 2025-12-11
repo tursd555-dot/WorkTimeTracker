@@ -829,9 +829,13 @@ class BreakManager:
             
             count = 0
             for row in rows:
-                if (row.get("Email", "").lower() == email.lower() and
-                    row.get("BreakType") == break_type and
-                    row.get("StartTime", "").startswith(today)):
+                row_email = row.get("Email") or row.get("email") or ""
+                row_break_type = row.get("BreakType") or row.get("break_type") or ""
+                start_time_str = row.get("StartTime") or row.get("start_time") or ""
+                
+                if (row_email.lower() == email.lower() and
+                    row_break_type == break_type and
+                    start_time_str.startswith(today)):
                     count += 1
             
             return count
@@ -850,10 +854,19 @@ class BreakManager:
             
             # Ищем с конца (самый последний активный перерыв)
             for row in reversed(rows):
-                if (row.get("Email", "").lower() == email.lower() and
-                    row.get("BreakType") == break_type and
-                    not row.get("EndTime") and
-                    row.get("StartTime", "").startswith(today)):  # Только сегодня!
+                row_email = row.get("Email") or row.get("email") or ""
+                row_break_type = row.get("BreakType") or row.get("break_type") or ""
+                end_time = row.get("EndTime") or row.get("end_time") or ""
+                status = row.get("Status") or row.get("status") or ""
+                start_time_str = row.get("StartTime") or row.get("start_time") or ""
+                
+                # Перерыв активен если: нет EndTime И (Status = 'Active' ИЛИ Status пустой)
+                is_active = (not end_time or end_time == '') and (status == 'Active' or status == '' or not status)
+                
+                if (row_email.lower() == email.lower() and
+                    row_break_type == break_type and
+                    is_active and
+                    start_time_str.startswith(today)):  # Только сегодня!
                     return row
             
             return None
@@ -1220,15 +1233,21 @@ class BreakManager:
             
             today = date.today().isoformat()
             
-            # Ищем записи без EndTime за сегодня
+            # Ищем записи без EndTime за сегодня (или со статусом Active)
             active = []
             for row in rows:
-                if (not row.get('EndTime') and 
-                    row.get('StartTime', '').startswith(today)):
+                end_time = row.get('EndTime') or row.get('end_time') or ''
+                status = row.get('Status') or row.get('status') or ''
+                start_time_str = row.get('StartTime') or row.get('start_time') or ''
+                
+                # Перерыв активен если: нет EndTime И (Status = 'Active' ИЛИ Status пустой)
+                is_active = (not end_time or end_time == '') and (status == 'Active' or status == '' or not status)
+                
+                if (is_active and start_time_str.startswith(today)):
                     
-                    email = row.get('Email')
-                    break_type = row.get('BreakType')
-                    start_time_str = row.get('StartTime')
+                    email = row.get('Email') or row.get('email') or ''
+                    break_type = row.get('BreakType') or row.get('break_type') or ''
+                    name = row.get('Name') or row.get('name') or ''
                     
                     # Вычисляем текущую длительность
                     duration = 0
@@ -1236,7 +1255,21 @@ class BreakManager:
                     
                     if start_time_str:
                         try:
-                            start_dt = datetime.fromisoformat(start_time_str)
+                            # Поддерживаем разные форматы времени
+                            if isinstance(start_time_str, str):
+                                # Убираем timezone если есть (для совместимости)
+                                start_time_clean = start_time_str.replace('Z', '').split('+')[0].split('.')[0]
+                                # Пробуем разные форматы
+                                try:
+                                    start_dt = datetime.strptime(start_time_clean, "%Y-%m-%d %H:%M:%S")
+                                except ValueError:
+                                    try:
+                                        start_dt = datetime.strptime(start_time_clean, "%Y-%m-%dT%H:%M:%S")
+                                    except ValueError:
+                                        # Используем fromisoformat как fallback
+                                        start_dt = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                            else:
+                                start_dt = datetime.fromisoformat(str(start_time_str))
                             duration = int((datetime.now() - start_dt).total_seconds() / 60)
                             
                             # Получаем лимит из графика (или дефолтный)
@@ -1256,7 +1289,7 @@ class BreakManager:
                     
                     active.append({
                         'Email': email,
-                        'Name': row.get('Name', ''),
+                        'Name': name,
                         'BreakType': break_type,
                         'StartTime': start_time_str,
                         'Duration': duration,
