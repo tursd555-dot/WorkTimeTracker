@@ -22,6 +22,13 @@ import logging
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, time, date
 from dataclasses import dataclass
+import sys
+from pathlib import Path
+
+# Добавляем путь к shared модулям
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from shared.time_utils import format_time_moscow, to_moscow
 
 logger = logging.getLogger(__name__)
 
@@ -975,9 +982,12 @@ class BreakManager:
                 if active:
                     start_time = datetime.fromisoformat(active["StartTime"])
                     duration = int((datetime.now() - start_time).total_seconds() / 60)
+                    # Конвертируем время начала в московское для отображения в интерфейсе
+                    start_time_moscow = to_moscow(start_time)
+                    start_time_formatted = start_time_moscow.strftime("%H:%M") if start_time_moscow else start_time.strftime("%H:%M")
                     active_break = {
                         "break_type": break_type,
-                        "start_time": start_time.strftime("%H:%M"),
+                        "start_time": start_time_formatted,
                         "duration": duration,
                         "limit": int(active.get("ExpectedDuration", "15"))
                     }

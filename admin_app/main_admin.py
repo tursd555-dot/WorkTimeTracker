@@ -38,6 +38,7 @@ from admin_app.notifications_panel import open_panel as open_notifications_panel
 # --- Менеджер перерывов ---
 from admin_app.break_manager import BreakManager
 from admin_app.break_analytics_tab import BreakAnalyticsTab
+from shared.time_utils import format_datetime_moscow
 
 # Инициализация логирования до запуска GUI (совместимо и со старой сигнатурой)
 try:
@@ -825,7 +826,9 @@ class AdminWindow(QMainWindow):
             
             row = self.violations_table.rowCount()
             self.violations_table.insertRow(row)
-            self.violations_table.setItem(row, 0, QTableWidgetItem(v.get("Timestamp", "")))
+            timestamp = v.get("Timestamp", "")
+            timestamp_formatted = format_datetime_moscow(timestamp) if timestamp else ""
+            self.violations_table.setItem(row, 0, QTableWidgetItem(timestamp_formatted))
             self.violations_table.setItem(row, 1, QTableWidgetItem(v.get("Email", "")))
             self.violations_table.setItem(row, 2, QTableWidgetItem(v.get("ViolationType", "")))
             self.violations_table.setItem(row, 3, QTableWidgetItem(v.get("Details", "")))

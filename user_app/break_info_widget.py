@@ -14,6 +14,13 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
 import logging
+import sys
+from pathlib import Path
+
+# Добавляем путь к shared модулям
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from shared.time_utils import format_datetime_moscow, format_time_moscow
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +172,16 @@ class BreakInfoWidget(QWidget):
             active = status.get('active_break')
             if active:
                 break_type = active.get('break_type', 'Перерыв')
-                start_time = active.get('start_time', '')
+                start_time_raw = active.get('start_time', '')
+                # Форматируем время начала в московское (UTC+3)
+                # Если start_time уже в формате "HH:MM", оставляем как есть
+                # Если это ISO строка или datetime, конвертируем в московское время
+                if start_time_raw and len(start_time_raw) > 5 and ('T' in start_time_raw or '-' in start_time_raw[:10]):
+                    # Это полный datetime, конвертируем в московское время
+                    start_time = format_time_moscow(start_time_raw, '%H:%M')
+                else:
+                    # Это уже время в формате "HH:MM" или пусто
+                    start_time = start_time_raw
                 duration = active.get('duration', 0)
                 limit = active.get('limit', 0)
                 

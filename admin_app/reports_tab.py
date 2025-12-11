@@ -26,6 +26,13 @@ from typing import List, Dict, Optional, Any
 from collections import defaultdict
 import logging
 import json
+import sys
+from pathlib import Path
+
+# Добавляем путь к shared модулям
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from shared.time_utils import format_datetime_moscow
 
 logger = logging.getLogger(__name__)
 
@@ -1355,7 +1362,7 @@ class ReportsTab(QWidget):
             dialog.setText(f"Найдено нарушений: {len(violations)}")
             
             details_text = "\n".join([
-                f"{v.get('Timestamp', '')[:19]}: {v.get('ViolationType', '')} - {v.get('Details', '')}"
+                f"{format_datetime_moscow(v.get('Timestamp', ''))}: {v.get('ViolationType', '')} - {v.get('Details', '')}"
                 for v in violations[:20]  # Показываем первые 20
             ])
             
@@ -1545,17 +1552,6 @@ class ReportsTab(QWidget):
             # Заполняем таблицу
             self.login_logout_table.setRowCount(len(sessions))
             
-            # Получаем локальный часовой пояс для преобразования времени
-            try:
-                from datetime import timezone as tz
-                local_tz = datetime.now().astimezone().tzinfo
-                test_dt = datetime.now(tz.utc)
-                local_dt = test_dt.astimezone(local_tz)
-                offset = local_dt.utcoffset()
-                local_offset_hours = offset.total_seconds() / 3600
-            except:
-                local_offset_hours = 3  # По умолчанию UTC+3 для Москвы
-            
             for row, session in enumerate(sessions):
                 login_time = session['login_time']
                 logout_time = session['logout_time'] or "В процессе..."
@@ -1570,38 +1566,9 @@ class ReportsTab(QWidget):
                 else:
                     status_display = login_status
                 
-                # Форматируем время с преобразованием в локальное
-                try:
-                    if login_time:
-                        if 'T' in login_time:
-                            login_dt_utc = datetime.fromisoformat(login_time.replace('Z', '+00:00'))
-                            if login_dt_utc.tzinfo is None:
-                                login_dt_utc = login_dt_utc.replace(tzinfo=tz.utc)
-                            login_dt_local = login_dt_utc + timedelta(hours=local_offset_hours)
-                            login_formatted = login_dt_local.strftime('%Y-%m-%d %H:%M:%S')
-                        else:
-                            login_formatted = login_time[:19] if len(login_time) >= 19 else login_time
-                    else:
-                        login_formatted = "N/A"
-                except Exception as e:
-                    logger.warning(f"Failed to format login time: {e}")
-                    login_formatted = login_time if login_time else "N/A"
-                
-                try:
-                    if logout_time != "В процессе...":
-                        if 'T' in logout_time:
-                            logout_dt_utc = datetime.fromisoformat(logout_time.replace('Z', '+00:00'))
-                            if logout_dt_utc.tzinfo is None:
-                                logout_dt_utc = logout_dt_utc.replace(tzinfo=tz.utc)
-                            logout_dt_local = logout_dt_utc + timedelta(hours=local_offset_hours)
-                            logout_formatted = logout_dt_local.strftime('%Y-%m-%d %H:%M:%S')
-                        else:
-                            logout_formatted = logout_time[:19] if len(logout_time) >= 19 else logout_time
-                    else:
-                        logout_formatted = logout_time
-                except Exception as e:
-                    logger.warning(f"Failed to format logout time: {e}")
-                    logout_formatted = logout_time if logout_time != "В процессе..." else "В процессе..."
+                # Форматируем время в московское (UTC+3)
+                login_formatted = format_datetime_moscow(login_time) if login_time else "N/A"
+                logout_formatted = format_datetime_moscow(logout_time) if logout_time != "В процессе..." else "В процессе..."
                 
                 # Вычисляем длительность сессии
                 if logout_time != "В процессе..." and login_time:
@@ -1717,15 +1684,8 @@ class ReportsTab(QWidget):
                 details = entry.get('details', '')
                 session_id = entry.get('session_id', '')
                 
-                # Форматируем время
-                try:
-                    if 'T' in timestamp_str:
-                        dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                        time_formatted = dt.strftime('%Y-%m-%d %H:%M:%S')
-                    else:
-                        time_formatted = timestamp_str[:19] if len(timestamp_str) >= 19 else timestamp_str
-                except:
-                    time_formatted = timestamp_str
+                # Форматируем время в московское (UTC+3)
+                time_formatted = format_datetime_moscow(timestamp_str) if timestamp_str else ""
                 
                 # Получаем имя и группу сотрудника
                 user = users_dict.get(email, {})
