@@ -142,6 +142,24 @@ class SyncManager(QObject):
                 # Даём GUI время на отображение сообщения
                 time.sleep(1)
                 return
+            elif remote_status == "completed":
+                # Сессия завершена (пользователь сам завершил или админ разлогинил)
+                logger.info(f"[SESSION_COMPLETED] Обнаружен статус 'completed' для пользователя {email}. Проверяем, нужно ли разлогинить.")
+                # Проверяем, была ли это принудительная команда от админа
+                # Если сессия завершена, но пользователь еще работает - разлогиниваем
+                if self.signals:
+                    logger.info(f"[SESSION_COMPLETED] Испускаем force_logout для завершенной сессии.")
+                    self.signals.force_logout.emit()
+                # Отправляем ACK подтверждение команды
+                try:
+                    sheets_api.ack_remote_command(email=email, session_id=session_id)
+                    logger.info(f"ACK отправлен для команды completed пользователя {email}")
+                except Exception as ack_error:
+                    logger.error(f"Ошибка отправки ACK: {ack_error}")
+                
+                # Даём GUI время на отображение сообщения
+                time.sleep(1)
+                return
             elif remote_status == "finished":
                 logger.warning(f"Получена команда 'finished' для пользователя {email}. Отправка сигнала в GUI.")
                 if self.signals:
