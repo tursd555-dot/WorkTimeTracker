@@ -238,3 +238,102 @@ class AdminRepo:
         except Exception as e:
             logger.exception("get_shift_calendar error: %s", e)
             return []
+    
+    # -------------------------------------------------------------------------
+    # Reports
+    # -------------------------------------------------------------------------
+    def get_work_log_data(self, date_from: Optional[str] = None, date_to: Optional[str] = None,
+                         email: Optional[str] = None, group: Optional[str] = None) -> List[Dict]:
+        """
+        Получает данные из work_log для отчетов.
+        
+        Args:
+            date_from: Начальная дата (ISO формат YYYY-MM-DD)
+            date_to: Конечная дата (ISO формат YYYY-MM-DD)
+            email: Фильтр по email сотрудника
+            group: Фильтр по группе
+        
+        Returns:
+            Список записей work_log
+        """
+        try:
+            # Проверяем, является ли это Supabase API
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                query = self.sheets.client.table('work_log').select('*')
+                
+                # Фильтр по дате
+                if date_from:
+                    query = query.gte('timestamp', f"{date_from}T00:00:00+00:00")
+                if date_to:
+                    query = query.lte('timestamp', f"{date_to}T23:59:59+00:00")
+                
+                # Фильтр по email
+                if email:
+                    query = query.eq('email', email.lower())
+                
+                response = query.execute()
+                data = response.data or []
+                
+                # Фильтр по группе (если указан)
+                if group and group != "Все группы":
+                    users = self.list_users()
+                    group_emails = {u.get("Email", "").lower() for u in users if u.get("Group", "") == group}
+                    data = [r for r in data if r.get('email', '').lower() in group_emails]
+                
+                return data
+            else:
+                # Для Google Sheets - используем старый метод
+                # TODO: Реализовать для Google Sheets
+                logger.warning("get_work_log_data not implemented for Google Sheets")
+                return []
+        except Exception as e:
+            logger.exception("get_work_log_data error: %s", e)
+            return []
+    
+    def get_break_log_data(self, date_from: Optional[str] = None, date_to: Optional[str] = None,
+                           email: Optional[str] = None, group: Optional[str] = None) -> List[Dict]:
+        """
+        Получает данные из break_log для отчетов.
+        
+        Args:
+            date_from: Начальная дата (ISO формат YYYY-MM-DD)
+            date_to: Конечная дата (ISO формат YYYY-MM-DD)
+            email: Фильтр по email сотрудника
+            group: Фильтр по группе
+        
+        Returns:
+            Список записей break_log
+        """
+        try:
+            # Проверяем, является ли это Supabase API
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                query = self.sheets.client.table('break_log').select('*')
+                
+                # Фильтр по дате
+                if date_from:
+                    query = query.gte('date', date_from)
+                if date_to:
+                    query = query.lte('date', date_to)
+                
+                # Фильтр по email
+                if email:
+                    query = query.eq('email', email.lower())
+                
+                response = query.execute()
+                data = response.data or []
+                
+                # Фильтр по группе (если указан)
+                if group and group != "Все группы":
+                    users = self.list_users()
+                    group_emails = {u.get("Email", "").lower() for u in users if u.get("Group", "") == group}
+                    data = [r for r in data if r.get('email', '').lower() in group_emails]
+                
+                return data
+            else:
+                # Для Google Sheets - используем метод из break_manager
+                # TODO: Реализовать для Google Sheets
+                logger.warning("get_break_log_data not implemented for Google Sheets")
+                return []
+        except Exception as e:
+            logger.exception("get_break_log_data error: %s", e)
+            return []

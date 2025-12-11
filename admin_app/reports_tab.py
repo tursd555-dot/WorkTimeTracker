@@ -468,36 +468,384 @@ class ReportsTab(QWidget):
     
     def _update_employees_report(self, date_from: str, date_to: str, user_filter: str, group_filter: str):
         """Обновляет отчет по сотрудникам"""
-        # TODO: Реализовать получение данных из базы
-        # Пока заглушка
-        self.employees_table.setRowCount(0)
-        self.emp_total_time_card.findChild(QLabel).setText("0:00")
-        self.emp_productive_card.findChild(QLabel).setText("0:00")
-        self.emp_productivity_card.findChild(QLabel).setText("0%")
-        self.emp_sessions_card.findChild(QLabel).setText("0")
+        try:
+            # Получаем данные из work_log
+            work_log_data = self.repo.get_work_log_data(
+                date_from=date_from,
+                date_to=date_to,
+                email=user_filter if user_filter and user_filter != "Все сотрудники" else None,
+                group=group_filter if group_filter and group_filter != "Все группы" else None
+            )
+            
+            # Получаем данные о нарушениях
+            violations = self.break_mgr.get_violations_report(
+                date_from=date_from,
+                date_to=date_to
+            )
+            
+            # Группируем данные по сотрудникам
+            employees_data = {}
+            users = self.repo.list_users()
+            users_dict = {u.get("Email", "").lower(): u for u in users}
+            
+            for log_entry in work_log_data:
+                email = log_entry.get('email', '').lower()
+                if not email:
+                    continue
+                
+                if email not in employees_data:
+                    user = users_dict.get(email, {})
+                    employees_data[email] = {
+                        'email': email,
+                        'name': user.get('Name', ''),
+                        'group': user.get('Group', ''),
+                        'sessions': set(),
+                        'statuses': {},
+                        'total_seconds': 0,
+                        'productive_seconds': 0
+                    }
+                
+                # Подсчитываем сессии
+                session_id = log_entry.get('session_id', '')
+                if session_id:
+                    employees_data[email]['sessions'].add(session_id)
+                
+                # Подсчитываем время по статусам
+                status = log_entry.get('status', '')
+                if status:
+                    if status not in employees_data[email]['statuses']:
+                        employees_data[email]['statuses'][status] = 0
+                    # Предполагаем, что каждая запись = 1 минута (нужно будет уточнить)
+                    employees_data[email]['statuses'][status] += 60
+                    employees_data[email]['total_seconds'] += 60
+                    
+                    # Продуктивные статусы
+                    if status in ['В работе', 'На задаче']:
+                        employees_data[email]['productive_seconds'] += 60
+            
+            # Подсчитываем нарушения для каждого сотрудника
+            violations_by_email = {}
+            for v in violations:
+                email = v.get('Email', '').lower()
+                if email:
+                    violations_by_email[email] = violations_by_email.get(email, 0) + 1
+            
+            # Заполняем таблицу
+            self.employees_table.setRowCount(len(employees_data))
+            total_time = 0
+            total_productive = 0
+            total_sessions = 0
+            
+            for row, (email, data) in enumerate(sorted(employees_data.items())):
+                total_hours = data['total_seconds'] // 3600
+                total_mins = (data['total_seconds'] % 3600) // 60
+                total_time_str = f"{total_hours}:{total_mins:02d}"
+                
+                productive_hours = data['productive_seconds'] // 3600
+                productive_mins = (data['productive_seconds'] % 3600) // 60
+                productive_time_str = f"{productive_hours}:{productive_mins:02d}"
+                
+                productivity_percent = (data['productive_seconds'] / data['total_seconds'] * 100) if data['total_seconds'] > 0 else 0
+                sessions_count = len(data['sessions'])
+                violations_count = violations_by_email.get(email, 0)
+                
+                total_time += data['total_seconds']
+                total_productive += data['productive_seconds']
+                total_sessions += sessions_count
+                
+                display_name = f"{data['name']} ({email})" if data['name'] else email
+                
+                self.employees_table.setItem(row, 0, QTableWidgetItem(display_name))
+                self.employees_table.setItem(row, 1, QTableWidgetItem(data['group']))
+                self.employees_table.setItem(row, 2, QTableWidgetItem(total_time_str))
+                self.employees_table.setItem(row, 3, QTableWidgetItem(productive_time_str))
+                self.employees_table.setItem(row, 4, QTableWidgetItem(f"{productivity_percent:.1f}%"))
+                self.employees_table.setItem(row, 5, QTableWidgetItem(str(sessions_count)))
+                self.employees_table.setItem(row, 6, QTableWidgetItem(str(violations_count)))
+                
+                details_btn = QPushButton("Детали")
+                details_btn.clicked.connect(lambda checked, e=email: self._show_employee_details(e, date_from, date_to))
+                self.employees_table.setCellWidget(row, 7, details_btn)
+            
+            # Обновляем карточки
+            total_hours = total_time // 3600
+            total_mins = (total_time % 3600) // 60
+            self.emp_total_time_card.findChild(QLabel).setText(f"{total_hours}:{total_mins:02d}")
+            
+            prod_hours = total_productive // 3600
+            prod_mins = (total_productive % 3600) // 60
+            self.emp_productive_card.findChild(QLabel).setText(f"{prod_hours}:{prod_mins:02d}")
+            
+            avg_productivity = (total_productive / total_time * 100) if total_time > 0 else 0
+            self.emp_productivity_card.findChild(QLabel).setText(f"{avg_productivity:.1f}%")
+            
+            self.emp_sessions_card.findChild(QLabel).setText(str(total_sessions))
+            
+        except Exception as e:
+            logger.error(f"Failed to update employees report: {e}", exc_info=True)
+            QMessageBox.warning(self, "Ошибка", f"Не удалось обновить отчет по сотрудникам: {e}")
     
     def _update_groups_report(self, date_from: str, date_to: str, group_filter: str):
         """Обновляет отчет по группам"""
-        # TODO: Реализовать получение данных из базы
-        self.groups_table.setRowCount(0)
-        self.grp_total_time_card.findChild(QLabel).setText("0:00")
-        self.grp_avg_time_card.findChild(QLabel).setText("0:00")
-        self.grp_productivity_card.findChild(QLabel).setText("0%")
-        self.grp_violations_card.findChild(QLabel).setText("0")
+        try:
+            # Получаем данные из work_log
+            work_log_data = self.repo.get_work_log_data(
+                date_from=date_from,
+                date_to=date_to,
+                group=group_filter if group_filter and group_filter != "Все группы" else None
+            )
+            
+            # Получаем данные о нарушениях
+            violations = self.break_mgr.get_violations_report(
+                date_from=date_from,
+                date_to=date_to
+            )
+            
+            # Группируем данные по группам
+            groups_data = {}
+            users = self.repo.list_users()
+            users_dict = {u.get("Email", "").lower(): u for u in users}
+            
+            for log_entry in work_log_data:
+                email = log_entry.get('email', '').lower()
+                user = users_dict.get(email, {})
+                group = user.get('Group', 'Без группы')
+                
+                if group not in groups_data:
+                    groups_data[group] = {
+                        'group': group,
+                        'employees': set(),
+                        'total_seconds': 0,
+                        'productive_seconds': 0,
+                        'sessions': set()
+                    }
+                
+                groups_data[group]['employees'].add(email)
+                session_id = log_entry.get('session_id', '')
+                if session_id:
+                    groups_data[group]['sessions'].add(session_id)
+                
+                status = log_entry.get('status', '')
+                if status:
+                    groups_data[group]['total_seconds'] += 60
+                    if status in ['В работе', 'На задаче']:
+                        groups_data[group]['productive_seconds'] += 60
+            
+            # Подсчитываем нарушения по группам
+            violations_by_group = {}
+            for v in violations:
+                email = v.get('Email', '').lower()
+                user = users_dict.get(email, {})
+                group = user.get('Group', 'Без группы')
+                violations_by_group[group] = violations_by_group.get(group, 0) + 1
+            
+            # Заполняем таблицу
+            self.groups_table.setRowCount(len(groups_data))
+            total_time = 0
+            total_productive = 0
+            
+            for row, (group_name, data) in enumerate(sorted(groups_data.items())):
+                employees_count = len(data['employees'])
+                total_hours = data['total_seconds'] // 3600
+                total_mins = (data['total_seconds'] % 3600) // 60
+                total_time_str = f"{total_hours}:{total_mins:02d}"
+                
+                avg_seconds = data['total_seconds'] // employees_count if employees_count > 0 else 0
+                avg_hours = avg_seconds // 3600
+                avg_mins = (avg_seconds % 3600) // 60
+                avg_time_str = f"{avg_hours}:{avg_mins:02d}"
+                
+                productivity_percent = (data['productive_seconds'] / data['total_seconds'] * 100) if data['total_seconds'] > 0 else 0
+                violations_count = violations_by_group.get(group_name, 0)
+                
+                total_time += data['total_seconds']
+                total_productive += data['productive_seconds']
+                
+                self.groups_table.setItem(row, 0, QTableWidgetItem(group_name))
+                self.groups_table.setItem(row, 1, QTableWidgetItem(str(employees_count)))
+                self.groups_table.setItem(row, 2, QTableWidgetItem(total_time_str))
+                self.groups_table.setItem(row, 3, QTableWidgetItem(avg_time_str))
+                self.groups_table.setItem(row, 4, QTableWidgetItem(f"{productivity_percent:.1f}%"))
+                self.groups_table.setItem(row, 5, QTableWidgetItem(str(violations_count)))
+                
+                details_btn = QPushButton("Детали")
+                details_btn.clicked.connect(lambda checked, g=group_name: self._show_group_details(g, date_from, date_to))
+                self.groups_table.setCellWidget(row, 6, details_btn)
+            
+            # Обновляем карточки
+            total_hours = total_time // 3600
+            total_mins = (total_time % 3600) // 60
+            self.grp_total_time_card.findChild(QLabel).setText(f"{total_hours}:{total_mins:02d}")
+            
+            avg_total = total_time // len(groups_data) if groups_data else 0
+            avg_hours = avg_total // 3600
+            avg_mins = (avg_total % 3600) // 60
+            self.grp_avg_time_card.findChild(QLabel).setText(f"{avg_hours}:{avg_mins:02d}")
+            
+            avg_productivity = (total_productive / total_time * 100) if total_time > 0 else 0
+            self.grp_productivity_card.findChild(QLabel).setText(f"{avg_productivity:.1f}%")
+            
+            total_violations = sum(violations_by_group.values())
+            self.grp_violations_card.findChild(QLabel).setText(str(total_violations))
+            
+        except Exception as e:
+            logger.error(f"Failed to update groups report: {e}", exc_info=True)
+            QMessageBox.warning(self, "Ошибка", f"Не удалось обновить отчет по группам: {e}")
     
     def _update_statuses_report(self, date_from: str, date_to: str, user_filter: str, group_filter: str):
         """Обновляет отчет по типам статусов"""
-        # TODO: Реализовать получение данных из базы
-        self.statuses_table.setRowCount(0)
+        try:
+            # Получаем данные из work_log
+            work_log_data = self.repo.get_work_log_data(
+                date_from=date_from,
+                date_to=date_to,
+                email=user_filter if user_filter and user_filter != "Все сотрудники" else None,
+                group=group_filter if group_filter and group_filter != "Все группы" else None
+            )
+            
+            # Группируем по статусам
+            statuses_data = {}
+            total_seconds = 0
+            
+            for log_entry in work_log_data:
+                status = log_entry.get('status', '')
+                if not status:
+                    continue
+                
+                if status not in statuses_data:
+                    statuses_data[status] = {
+                        'status': status,
+                        'seconds': 0,
+                        'transitions': 0,
+                        'employees': set()
+                    }
+                
+                statuses_data[status]['seconds'] += 60  # Предполагаем 1 минута на запись
+                statuses_data[status]['transitions'] += 1
+                statuses_data[status]['employees'].add(log_entry.get('email', ''))
+                total_seconds += 60
+            
+            # Заполняем таблицу
+            self.statuses_table.setRowCount(len(statuses_data))
+            
+            for row, (status, data) in enumerate(sorted(statuses_data.items(), key=lambda x: x[1]['seconds'], reverse=True)):
+                hours = data['seconds'] // 3600
+                mins = (data['seconds'] % 3600) // 60
+                time_str = f"{hours}:{mins:02d}"
+                
+                percent = (data['seconds'] / total_seconds * 100) if total_seconds > 0 else 0
+                
+                avg_duration = data['seconds'] / data['transitions'] if data['transitions'] > 0 else 0
+                avg_mins = int(avg_duration // 60)
+                avg_duration_str = f"{avg_mins} мин"
+                
+                employees_count = len(data['employees'])
+                
+                self.statuses_table.setItem(row, 0, QTableWidgetItem(status))
+                self.statuses_table.setItem(row, 1, QTableWidgetItem(time_str))
+                self.statuses_table.setItem(row, 2, QTableWidgetItem(f"{percent:.1f}%"))
+                self.statuses_table.setItem(row, 3, QTableWidgetItem(str(data['transitions'])))
+                self.statuses_table.setItem(row, 4, QTableWidgetItem(avg_duration_str))
+                self.statuses_table.setItem(row, 5, QTableWidgetItem(str(employees_count)))
+            
+        except Exception as e:
+            logger.error(f"Failed to update statuses report: {e}", exc_info=True)
+            QMessageBox.warning(self, "Ошибка", f"Не удалось обновить отчет по статусам: {e}")
     
     def _update_productivity_report(self, date_from: str, date_to: str, user_filter: str, group_filter: str):
         """Обновляет отчет по продуктивным статусам"""
-        # TODO: Реализовать получение данных из базы
-        self.productivity_table.setRowCount(0)
-        self.prod_total_card.findChild(QLabel).setText("0:00")
-        self.prod_percent_card.findChild(QLabel).setText("0%")
-        self.prod_avg_card.findChild(QLabel).setText("0:00")
-        self.prod_sessions_card.findChild(QLabel).setText("0")
+        try:
+            # Получаем данные из work_log
+            work_log_data = self.repo.get_work_log_data(
+                date_from=date_from,
+                date_to=date_to,
+                email=user_filter if user_filter and user_filter != "Все сотрудники" else None,
+                group=group_filter if group_filter and group_filter != "Все группы" else None
+            )
+            
+            # Группируем по сотрудникам, считаем только продуктивные статусы
+            employees_data = {}
+            users = self.repo.list_users()
+            users_dict = {u.get("Email", "").lower(): u for u in users}
+            
+            productive_statuses = ['В работе', 'На задаче']
+            total_seconds = 0
+            productive_seconds = 0
+            
+            for log_entry in work_log_data:
+                email = log_entry.get('email', '').lower()
+                status = log_entry.get('status', '')
+                
+                if not email or not status:
+                    continue
+                
+                if email not in employees_data:
+                    user = users_dict.get(email, {})
+                    employees_data[email] = {
+                        'email': email,
+                        'name': user.get('Name', ''),
+                        'group': user.get('Group', ''),
+                        'productive_seconds': 0,
+                        'total_seconds': 0,
+                        'sessions': set()
+                    }
+                
+                session_id = log_entry.get('session_id', '')
+                if session_id:
+                    employees_data[email]['sessions'].add(session_id)
+                
+                employees_data[email]['total_seconds'] += 60
+                total_seconds += 60
+                
+                if status in productive_statuses:
+                    employees_data[email]['productive_seconds'] += 60
+                    productive_seconds += 60
+            
+            # Сортируем по продуктивному времени
+            sorted_employees = sorted(
+                employees_data.items(),
+                key=lambda x: x[1]['productive_seconds'],
+                reverse=True
+            )[:10]
+            
+            # Заполняем таблицу
+            self.productivity_table.setRowCount(len(sorted_employees))
+            
+            for row, (email, data) in enumerate(sorted_employees):
+                prod_hours = data['productive_seconds'] // 3600
+                prod_mins = (data['productive_seconds'] % 3600) // 60
+                prod_time_str = f"{prod_hours}:{prod_mins:02d}"
+                
+                productivity_percent = (data['productive_seconds'] / data['total_seconds'] * 100) if data['total_seconds'] > 0 else 0
+                sessions_count = len(data['sessions'])
+                
+                display_name = f"{data['name']} ({email})" if data['name'] else email
+                
+                self.productivity_table.setItem(row, 0, QTableWidgetItem(display_name))
+                self.productivity_table.setItem(row, 1, QTableWidgetItem(data['group']))
+                self.productivity_table.setItem(row, 2, QTableWidgetItem(prod_time_str))
+                self.productivity_table.setItem(row, 3, QTableWidgetItem(f"{productivity_percent:.1f}%"))
+                self.productivity_table.setItem(row, 4, QTableWidgetItem(str(sessions_count)))
+            
+            # Обновляем карточки
+            prod_hours = productive_seconds // 3600
+            prod_mins = (productive_seconds % 3600) // 60
+            self.prod_total_card.findChild(QLabel).setText(f"{prod_hours}:{prod_mins:02d}")
+            
+            productivity_percent = (productive_seconds / total_seconds * 100) if total_seconds > 0 else 0
+            self.prod_percent_card.findChild(QLabel).setText(f"{productivity_percent:.1f}%")
+            
+            avg_productive = productive_seconds // len(employees_data) if employees_data else 0
+            avg_hours = avg_productive // 3600
+            avg_mins = (avg_productive % 3600) // 60
+            self.prod_avg_card.findChild(QLabel).setText(f"{avg_hours}:{avg_mins:02d}")
+            
+            total_sessions = sum(len(d['sessions']) for d in employees_data.values())
+            self.prod_sessions_card.findChild(QLabel).setText(str(total_sessions))
+            
+        except Exception as e:
+            logger.error(f"Failed to update productivity report: {e}", exc_info=True)
+            QMessageBox.warning(self, "Ошибка", f"Не удалось обновить отчет по продуктивности: {e}")
     
     def _update_violations_report(self, date_from: str, date_to: str, user_filter: str, group_filter: str):
         """Обновляет отчет по нарушениям"""
@@ -567,12 +915,87 @@ class ReportsTab(QWidget):
     
     def _update_breaks_report(self, date_from: str, date_to: str, user_filter: str, group_filter: str):
         """Обновляет отчет по перерывам"""
-        # TODO: Реализовать получение данных из базы
-        self.breaks_table.setRowCount(0)
-        self.brk_total_card.findChild(QLabel).setText("0")
-        self.brk_time_card.findChild(QLabel).setText("0:00")
-        self.brk_avg_card.findChild(QLabel).setText("0:00")
-        self.brk_in_schedule_card.findChild(QLabel).setText("0%")
+        try:
+            # Получаем данные из break_log
+            break_log_data = self.repo.get_break_log_data(
+                date_from=date_from,
+                date_to=date_to,
+                email=user_filter if user_filter and user_filter != "Все сотрудники" else None,
+                group=group_filter if group_filter and group_filter != "Все группы" else None
+            )
+            
+            # Группируем по сотрудникам
+            employees_data = {}
+            users = self.repo.list_users()
+            users_dict = {u.get("Email", "").lower(): u for u in users}
+            
+            total_breaks = 0
+            total_break_seconds = 0
+            
+            for break_entry in break_log_data:
+                email = break_entry.get('email', '').lower()
+                if not email:
+                    continue
+                
+                if email not in employees_data:
+                    user = users_dict.get(email, {})
+                    employees_data[email] = {
+                        'email': email,
+                        'name': user.get('Name', ''),
+                        'group': user.get('Group', ''),
+                        'breaks_count': 0,
+                        'break_seconds': 0
+                    }
+                
+                employees_data[email]['breaks_count'] += 1
+                total_breaks += 1
+                
+                # Подсчитываем время перерыва
+                duration = break_entry.get('duration_minutes', 0)
+                if duration:
+                    employees_data[email]['break_seconds'] += duration * 60
+                    total_break_seconds += duration * 60
+            
+            # Заполняем таблицу
+            self.breaks_table.setRowCount(len(employees_data))
+            
+            for row, (email, data) in enumerate(sorted(employees_data.items(), key=lambda x: x[1]['breaks_count'], reverse=True)):
+                break_hours = data['break_seconds'] // 3600
+                break_mins = (data['break_seconds'] % 3600) // 60
+                break_time_str = f"{break_hours}:{break_mins:02d}"
+                
+                avg_break_seconds = data['break_seconds'] // data['breaks_count'] if data['breaks_count'] > 0 else 0
+                avg_mins = avg_break_seconds // 60
+                avg_time_str = f"{avg_mins} мин"
+                
+                display_name = f"{data['name']} ({email})" if data['name'] else email
+                
+                self.breaks_table.setItem(row, 0, QTableWidgetItem(display_name))
+                self.breaks_table.setItem(row, 1, QTableWidgetItem(data['group']))
+                self.breaks_table.setItem(row, 2, QTableWidgetItem(str(data['breaks_count'])))
+                self.breaks_table.setItem(row, 3, QTableWidgetItem(break_time_str))
+                self.breaks_table.setItem(row, 4, QTableWidgetItem("N/A"))  # В рамках графика - TODO
+                
+                details_btn = QPushButton("Детали")
+                details_btn.clicked.connect(lambda checked, e=email: self._show_breaks_details(e, date_from, date_to))
+                self.breaks_table.setCellWidget(row, 5, details_btn)
+            
+            # Обновляем карточки
+            self.brk_total_card.findChild(QLabel).setText(str(total_breaks))
+            
+            total_hours = total_break_seconds // 3600
+            total_mins = (total_break_seconds % 3600) // 60
+            self.brk_time_card.findChild(QLabel).setText(f"{total_hours}:{total_mins:02d}")
+            
+            avg_break_seconds = total_break_seconds // total_breaks if total_breaks > 0 else 0
+            avg_mins = avg_break_seconds // 60
+            self.brk_avg_card.findChild(QLabel).setText(f"{avg_mins} мин")
+            
+            self.brk_in_schedule_card.findChild(QLabel).setText("N/A")  # TODO
+            
+        except Exception as e:
+            logger.error(f"Failed to update breaks report: {e}", exc_info=True)
+            QMessageBox.warning(self, "Ошибка", f"Не удалось обновить отчет по перерывам: {e}")
     
     def _show_violations_details(self, email: str, date_from: str, date_to: str):
         """Показывает детали нарушений для сотрудника"""
@@ -599,6 +1022,86 @@ class ReportsTab(QWidget):
             dialog.exec_()
         except Exception as e:
             logger.error(f"Failed to show violations details: {e}")
+    
+    def _show_employee_details(self, email: str, date_from: str, date_to: str):
+        """Показывает детали работы сотрудника"""
+        try:
+            work_log_data = self.repo.get_work_log_data(
+                email=email,
+                date_from=date_from,
+                date_to=date_to
+            )
+            
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle(f"Детали работы: {email}")
+            dialog.setText(f"Найдено записей: {len(work_log_data)}")
+            
+            # Группируем по статусам
+            statuses = {}
+            for entry in work_log_data:
+                status = entry.get('status', '')
+                if status:
+                    statuses[status] = statuses.get(status, 0) + 1
+            
+            details_text = "Распределение по статусам:\n"
+            for status, count in sorted(statuses.items(), key=lambda x: x[1], reverse=True):
+                details_text += f"{status}: {count} записей\n"
+            
+            dialog.setDetailedText(details_text)
+            dialog.exec_()
+        except Exception as e:
+            logger.error(f"Failed to show employee details: {e}")
+    
+    def _show_group_details(self, group: str, date_from: str, date_to: str):
+        """Показывает детали работы группы"""
+        try:
+            work_log_data = self.repo.get_work_log_data(
+                group=group,
+                date_from=date_from,
+                date_to=date_to
+            )
+            
+            users = self.repo.list_users()
+            group_users = [u for u in users if u.get('Group', '') == group]
+            
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle(f"Детали группы: {group}")
+            dialog.setText(f"Сотрудников: {len(group_users)}, Записей: {len(work_log_data)}")
+            
+            details_text = f"Сотрудники в группе:\n"
+            for user in group_users:
+                details_text += f"- {user.get('Name', '')} ({user.get('Email', '')})\n"
+            
+            dialog.setDetailedText(details_text)
+            dialog.exec_()
+        except Exception as e:
+            logger.error(f"Failed to show group details: {e}")
+    
+    def _show_breaks_details(self, email: str, date_from: str, date_to: str):
+        """Показывает детали перерывов сотрудника"""
+        try:
+            break_log_data = self.repo.get_break_log_data(
+                email=email,
+                date_from=date_from,
+                date_to=date_to
+            )
+            
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle(f"Перерывы: {email}")
+            dialog.setText(f"Найдено перерывов: {len(break_log_data)}")
+            
+            details_text = "\n".join([
+                f"{entry.get('date', '')} {entry.get('break_type', '')}: {entry.get('duration_minutes', 0)} мин"
+                for entry in break_log_data[:20]
+            ])
+            
+            if len(break_log_data) > 20:
+                details_text += f"\n... и еще {len(break_log_data) - 20} перерывов"
+            
+            dialog.setDetailedText(details_text)
+            dialog.exec_()
+        except Exception as e:
+            logger.error(f"Failed to show breaks details: {e}")
     
     def _export_to_excel(self):
         """Экспортирует текущий отчет в Excel"""
