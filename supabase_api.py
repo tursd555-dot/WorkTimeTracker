@@ -578,14 +578,15 @@ class SupabaseAPI:
                     return False
             elif table_name == "violations" or table_name == "break_violations":
                 # Формат: [timestamp, email, session_id, violation_type, details, status]
-                # В Supabase таблица называется "violations"
+                # В Supabase таблица называется "violations" и имеет другую структуру:
+                # Id, UserId, Email, Name, ViolationType, BreakType, Timestamp, ExpectedDuration, ActualDuration, ExcessMinutes, Date, Details, CreatedAt
                 if len(values) >= 6:
                     timestamp = str(values[0]) if values[0] else None
                     email_val = str(values[1]).lower() if values[1] else None
-                    session_id = str(values[2]) if values[2] else None
+                    session_id = str(values[2]) if values[2] else None  # Не используется в таблице, но может быть в details
                     violation_type = str(values[3]) if values[3] else None
                     details = str(values[4]) if values[4] else None
-                    status = str(values[5]) if values[5] else "pending"
+                    status = str(values[5]) if values[5] else "pending"  # Не используется в таблице
                     
                     if not email_val or not violation_type:
                         logger.error(f"Missing required fields for violation: email={email_val}, violation_type={violation_type}")
@@ -594,23 +595,61 @@ class SupabaseAPI:
                     # Преобразуем timestamp в формат ISO, если нужно
                     if timestamp:
                         if len(timestamp) == 19:  # Формат "YYYY-MM-DD HH:MM:SS"
-                            timestamp = timestamp.replace(" ", "T") + "+00:00"
+                            timestamp_iso = timestamp.replace(" ", "T") + "+00:00"
                         elif len(timestamp) == 10:  # Формат "YYYY-MM-DD"
-                            timestamp = timestamp + "T00:00:00+00:00"
-                        # Если уже в ISO формате, оставляем как есть
+                            timestamp_iso = timestamp + "T00:00:00+00:00"
+                        else:
+                            timestamp_iso = timestamp
                     else:
                         # Если timestamp не указан, используем текущее время
                         from datetime import datetime
-                        timestamp = datetime.now().isoformat() + "+00:00"
+                        timestamp_iso = datetime.now().isoformat() + "+00:00"
+                    
+                    # Извлекаем дату из timestamp
+                    violation_date = timestamp_iso[:10] if timestamp_iso else datetime.now().date().isoformat()
+                    
+                    # Пытаемся найти UserId по email
+                    user_id = None
+                    user_name = None
+                    try:
+                        user_response = self.client.table('users')\
+                            .select('id, name, email')\
+                            .eq('email', email_val)\
+                            .limit(1)\
+                            .execute()
+                        if user_response.data:
+                            user_id = user_response.data[0].get('id')
+                            user_name = user_response.data[0].get('name')
+                    except Exception as e:
+                        logger.debug(f"Could not find user by email {email_val}: {e}")
+                    
+                    # Определяем BreakType из details, если возможно
+                    break_type = None
+                    if details:
+                        if 'Перерыв' in details:
+                            break_type = 'Перерыв'
+                        elif 'Обед' in details:
+                            break_type = 'Обед'
                     
                     violation_data = {
-                        'timestamp': timestamp or datetime.now().isoformat(),
                         'email': email_val,
-                        'session_id': session_id,
                         'violation_type': violation_type,
+                        'timestamp': timestamp_iso,
+                        'date': violation_date,
                         'details': details or '',
-                        'status': status
                     }
+                    
+                    # Добавляем опциональные поля только если они есть
+                    if user_id:
+                        violation_data['user_id'] = user_id
+                    if user_name:
+                        violation_data['name'] = user_name
+                    if break_type:
+                        violation_data['break_type'] = break_type
+                    if session_id:
+                        # Добавляем session_id в details, если его нет там
+                        if session_id not in (details or ''):
+                            violation_data['details'] = (details or '') + f" (SessionID: {session_id})"
                     
                     try:
                         # Используем правильное имя таблицы "violations"
