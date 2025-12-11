@@ -478,9 +478,9 @@ class SupabaseAPI:
                                 logger.error(f"Invalid start_time format: {start_time_str}")
                                 return False
                         
-                        # Преобразуем end_time если есть
+                        # Преобразуем end_time если есть (НЕ добавляем если пусто!)
                         end_time_iso = None
-                        if end_time_str and end_time_str.strip():
+                        if end_time_str and end_time_str.strip() and end_time_str.strip() != "":
                             try:
                                 if 'T' in end_time_str or '+' in end_time_str or end_time_str.endswith('Z'):
                                     end_time_iso = end_time_str
@@ -490,9 +490,9 @@ class SupabaseAPI:
                             except ValueError:
                                 pass
                         
-                        # Преобразуем duration
+                        # Преобразуем duration (НЕ добавляем если пусто!)
                         duration_minutes = None
-                        if duration_val and duration_val.strip():
+                        if duration_val and duration_val.strip() and duration_val.strip() != "":
                             try:
                                 duration_minutes = int(duration_val)
                             except ValueError:
@@ -510,10 +510,14 @@ class SupabaseAPI:
                             'status': status_val
                         }
                         
+                        # Добавляем end_time ТОЛЬКО если он реально есть (не пустой)
                         if end_time_iso:
                             data['end_time'] = end_time_iso
+                        # Добавляем duration ТОЛЬКО если он реально есть (не пустой)
                         if duration_minutes is not None:
                             data['duration_minutes'] = duration_minutes
+                        
+                        logger.debug(f"Inserting break_log data: {data}")
                         
                         logger.info(f"Inserting break_log: email={email_val}, break_type={break_type_val}, start_time={start_time_iso}")
                         response = self.client.table(table_name).insert(data).execute()

@@ -856,12 +856,14 @@ class BreakManager:
             for row in reversed(rows):
                 row_email = row.get("Email") or row.get("email") or ""
                 row_break_type = row.get("BreakType") or row.get("break_type") or ""
-                end_time = row.get("EndTime") or row.get("end_time") or ""
+                end_time = row.get("EndTime") or row.get("end_time") or None
                 status = row.get("Status") or row.get("status") or ""
                 start_time_str = row.get("StartTime") or row.get("start_time") or ""
                 
-                # Перерыв активен если: нет EndTime И (Status = 'Active' ИЛИ Status пустой)
-                is_active = (not end_time or end_time == '') and (status == 'Active' or status == '' or not status)
+                # Перерыв активен если: нет EndTime (None или пустая строка) И Status = 'Active' (или пустой/None)
+                has_end_time = end_time is not None and str(end_time).strip() != ''
+                is_active_status = status == 'Active' or status == '' or status is None or not status
+                is_active = not has_end_time and is_active_status
                 
                 if (row_email.lower() == email.lower() and
                     row_break_type == break_type and
@@ -1239,16 +1241,20 @@ class BreakManager:
             logger.debug(f"Checking for active breaks. Total rows: {len(rows)}, Today: {today}")
             
             for row in rows:
-                end_time = row.get('EndTime') or row.get('end_time') or ''
+                end_time = row.get('EndTime') or row.get('end_time') or None
                 status = row.get('Status') or row.get('status') or ''
                 start_time_str = str(row.get('StartTime') or row.get('start_time') or '')
                 
-                # Перерыв активен если: нет EndTime И (Status = 'Active' ИЛИ Status пустой)
-                is_active = (not end_time or end_time == '') and (status == 'Active' or status == '' or not status)
+                # Перерыв активен если: нет EndTime (None или пустая строка) И Status = 'Active' (или пустой/None)
+                # Проверяем end_time: None, пустая строка, или отсутствует в данных
+                has_end_time = end_time is not None and str(end_time).strip() != ''
+                is_active_status = status == 'Active' or status == '' or status is None or not status
+                is_active = not has_end_time and is_active_status
                 is_today = start_time_str.startswith(today)
                 
                 logger.debug(f"Row check: email={row.get('Email') or row.get('email')}, "
                            f"start_time={start_time_str}, end_time={end_time}, status={status}, "
+                           f"has_end_time={has_end_time}, is_active_status={is_active_status}, "
                            f"is_active={is_active}, is_today={is_today}")
                 
                 if (is_active and is_today):
