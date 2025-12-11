@@ -263,13 +263,16 @@ class SupabaseAPI:
         """
         Проверяет статус указанной сессии пользователя в Supabase.
         Возвращает: 'active', 'kicked', 'finished', 'expired', 'unknown'
+        
+        ВАЖНО: Ищем в work_sessions, а не в VIEW active_sessions,
+        чтобы видеть актуальные изменения сразу после обновления.
         """
         try:
             email_lower = (email or "").strip().lower()
             session_id_str = str(session_id).strip()
             
-            # Ищем сессию по email и session_id
-            response = self.client.table('active_sessions')\
+            # Ищем сессию по email и session_id в work_sessions (не в VIEW!)
+            response = self.client.table('work_sessions')\
                 .select('status')\
                 .eq('email', email_lower)\
                 .eq('session_id', session_id_str)\
@@ -279,10 +282,11 @@ class SupabaseAPI:
             
             if response.data:
                 status = (response.data[0].get('status') or '').strip().lower()
+                logger.debug(f"Session status for {email_lower}/{session_id_str}: {status}")
                 return status if status else 'unknown'
             
             # Если точного совпадения нет, ищем по email (последняя сессия)
-            response = self.client.table('active_sessions')\
+            response = self.client.table('work_sessions')\
                 .select('status')\
                 .eq('email', email_lower)\
                 .order('login_time', desc=True)\
@@ -291,12 +295,14 @@ class SupabaseAPI:
             
             if response.data:
                 status = (response.data[0].get('status') or '').strip().lower()
+                logger.debug(f"Session status for {email_lower} (by email only): {status}")
                 return status if status else 'unknown'
             
+            logger.debug(f"No session found for {email_lower}/{session_id_str}")
             return 'unknown'
             
         except Exception as e:
-            logger.error(f"Failed to check session status for {email}: {e}")
+            logger.error(f"Failed to check session status for {email}: {e}", exc_info=True)
             return 'unknown'
     
     def kick_active_session(
