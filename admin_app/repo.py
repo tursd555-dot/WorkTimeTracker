@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import List, Dict, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from api_adapter import SheetsAPI, SheetsAPIError
 from config import (
@@ -262,10 +262,21 @@ class AdminRepo:
                 query = self.sheets.client.table('work_log').select('*')
                 
                 # Фильтр по дате
+                # Используем более широкий диапазон для захвата всех записей за день
                 if date_from:
                     query = query.gte('timestamp', f"{date_from}T00:00:00+00:00")
                 if date_to:
-                    query = query.lte('timestamp', f"{date_to}T23:59:59+00:00")
+                    # Используем начало следующего дня для корректного захвата всех записей за date_to
+                    # Это гарантирует, что мы захватим все записи до 23:59:59.999 включительно
+                    try:
+                        date_to_dt = datetime.strptime(date_to, '%Y-%m-%d')
+                        next_day = date_to_dt + timedelta(days=1)
+                        date_to_end = next_day.strftime('%Y-%m-%d') + 'T00:00:00+00:00'
+                        query = query.lt('timestamp', date_to_end)  # Используем lt вместо lte
+                        logger.debug(f"Date filter: date_to='{date_to}', using range up to '{date_to_end}'")
+                    except Exception as e:
+                        logger.warning(f"Failed to parse date_to '{date_to}': {e}, using fallback")
+                        query = query.lte('timestamp', f"{date_to}T23:59:59.999+00:00")
                 
                 # Фильтр по email
                 if email:
