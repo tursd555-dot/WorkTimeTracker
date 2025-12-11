@@ -316,6 +316,11 @@ class SupabaseAPI:
         """
         Принудительно завершает ПОСЛЕДНЮЮ активную сессию пользователя.
         
+        ВАЖНО: Устанавливает статус 'kicked' для принудительного разлогинивания из админки.
+        """
+        """
+        Принудительно завершает ПОСЛЕДНЮЮ активную сессию пользователя.
+        
         Args:
             email: Email пользователя
             session_id: Опциональный ID сессии (если None, берется последняя активная)
@@ -384,27 +389,38 @@ class SupabaseAPI:
             
             # Обновляем сессию в work_sessions
             try:
-                logger.info(f"Updating session {session_id_to_update} with status='{status}', logout_time='{logout_time_str}'")
+                logger.info(f"[KICK_SESSION] Updating session {session_id_to_update} for {email} with status='{status}', logout_time='{logout_time_str}'")
+                logger.info(f"[KICK_SESSION] Update data: {update_data}")
+                
                 update_response = self.client.table('work_sessions')\
                     .update(update_data)\
                     .eq('session_id', session_id_to_update)\
                     .execute()
                 
-                logger.info(f"Update response: {len(update_response.data)} rows updated")
+                logger.info(f"[KICK_SESSION] Update response: {len(update_response.data)} rows updated")
                 
-                # Проверяем, что статус действительно обновился
+                # Проверяем, что статус действительно обновился (с небольшой задержкой для гарантии)
+                import time
+                time.sleep(0.5)  # Небольшая задержка для гарантии обновления в БД
+                
                 verify_response = self.client.table('work_sessions')\
-                    .select('status')\
+                    .select('status, logout_time')\
                     .eq('session_id', session_id_to_update)\
                     .execute()
                 
                 if verify_response.data:
                     actual_status = verify_response.data[0].get('status', '')
-                    logger.info(f"Verified status after update: '{actual_status}' (expected: '{status}')")
+                    actual_logout_time = verify_response.data[0].get('logout_time', '')
+                    logger.info(f"[KICK_SESSION] Verified status after update: '{actual_status}' (expected: '{status}')")
+                    logger.info(f"[KICK_SESSION] Verified logout_time: '{actual_logout_time}'")
                     if actual_status.lower() != status.lower():
-                        logger.warning(f"Status mismatch! Expected '{status}', got '{actual_status}'")
+                        logger.warning(f"[KICK_SESSION] ⚠️ Status mismatch! Expected '{status}', got '{actual_status}'")
+                    else:
+                        logger.info(f"[KICK_SESSION] ✅ Status correctly set to '{status}'")
+                else:
+                    logger.warning(f"[KICK_SESSION] ⚠️ Could not verify status - session not found after update")
                 
-                logger.info(f"Successfully kicked session {session_id_to_update} for {email}")
+                logger.info(f"[KICK_SESSION] Successfully kicked session {session_id_to_update} for {email}")
                 return True
             except Exception as update_error:
                 # Если ошибка из-за remote_command - пробуем без него
