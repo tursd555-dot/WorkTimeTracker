@@ -1,33 +1,29 @@
 # admin_app/realtime_monitor.py
 """
-Модуль мониторинга статусов пользователей в реальном времени
+Отдельное приложение мониторинга статусов пользователей в реальном времени
 
-Отображает:
-- Текущие статусы всех пользователей
-- Время пребывания в статусах
-- Активные перерывы и обеды
-- Предупреждения о превышении лимитов
-- Информативный интерфейс с настройками визуализации
+Запускается как отдельное окно, независимо от админки.
+Отображает статусы пользователей, время пребывания в статусах,
+активные перерывы с предупреждениями о превышении лимитов.
 """
 from __future__ import annotations
 import sys
 from pathlib import Path
-from typing import List, Dict, Optional, Set
-from datetime import datetime, timedelta
+from typing import List, Dict, Optional
+from datetime import datetime
 import logging
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox,
-    QComboBox, QCheckBox, QSpinBox, QFrame, QScrollArea,
-    QGridLayout, QSplitter, QMessageBox, QColorDialog, QDialog,
-    QFormLayout, QDialogButtonBox
+    QComboBox, QCheckBox, QSpinBox, QFrame, QDialog,
+    QFormLayout, QDialogButtonBox, QMessageBox
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QPalette, QBrush
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QColor, QFont, QIcon
 from shared.time_utils import format_datetime_moscow, format_time_moscow, to_moscow
 
 logger = logging.getLogger(__name__)
@@ -39,7 +35,7 @@ class MonitorSettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Настройки мониторинга")
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(450)
         self._build_ui()
     
     def _build_ui(self):
@@ -52,20 +48,20 @@ class MonitorSettingsDialog(QDialog):
         self.update_interval.setSuffix(" сек")
         layout.addRow("Интервал обновления:", self.update_interval)
         
+        # Сортировка
+        self.sort_by = QComboBox()
+        self.sort_by.addItems([
+            "По ФИО",
+            "По статусу",
+            "По группам",
+            "По времени залогинивания"
+        ])
+        layout.addRow("Сортировка:", self.sort_by)
+        
         # Показывать только активных
         self.show_active_only = QCheckBox("Показывать только активных пользователей")
         self.show_active_only.setChecked(False)
         layout.addRow("", self.show_active_only)
-        
-        # Группировка
-        self.group_by_group = QCheckBox("Группировать по группам")
-        self.group_by_group.setChecked(True)
-        layout.addRow("", self.group_by_group)
-        
-        # Цветовая схема
-        self.color_scheme = QComboBox()
-        self.color_scheme.addItems(["Стандартная", "Темная", "Яркая", "Минималистичная"])
-        layout.addRow("Цветовая схема:", self.color_scheme)
         
         # Кнопки
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -76,18 +72,25 @@ class MonitorSettingsDialog(QDialog):
     def get_settings(self) -> Dict:
         return {
             'update_interval': self.update_interval.value(),
-            'show_active_only': self.show_active_only.isChecked(),
-            'group_by_group': self.group_by_group.isChecked(),
-            'color_scheme': self.color_scheme.currentText()
+            'sort_by': self.sort_by.currentText(),
+            'show_active_only': self.show_active_only.isChecked()
         }
-
-
-class RealtimeMonitorTab(QWidget):
-    """
-    Вкладка мониторинга статусов в реальном времени
     
-    Отображает статусы пользователей, время в статусах,
-    активные перерывы с предупреждениями о превышении лимитов.
+    def set_settings(self, settings: Dict):
+        """Устанавливает настройки в диалог"""
+        self.update_interval.setValue(settings.get('update_interval', 5))
+        sort_by = settings.get('sort_by', 'По ФИО')
+        index = self.sort_by.findText(sort_by)
+        if index >= 0:
+            self.sort_by.setCurrentIndex(index)
+        self.show_active_only.setChecked(settings.get('show_active_only', False))
+
+
+class RealtimeMonitorWindow(QMainWindow):
+    """
+    Отдельное окно мониторинга статусов в реальном времени
+    
+    Запускается как независимое приложение.
     """
     
     def __init__(self, repo, break_manager, parent=None):
@@ -98,9 +101,8 @@ class RealtimeMonitorTab(QWidget):
         # Настройки
         self.settings = {
             'update_interval': 5,  # секунд
-            'show_active_only': False,
-            'group_by_group': True,
-            'color_scheme': 'Стандартная'
+            'sort_by': 'По ФИО',
+            'show_active_only': False
         }
         
         # Данные
@@ -118,16 +120,22 @@ class RealtimeMonitorTab(QWidget):
     
     def _setup_ui(self):
         """Создает интерфейс"""
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        self.setWindowTitle("📺 Мониторинг статусов - WorkTimeTracker")
+        self.setMinimumSize(1400, 800)
+        
+        # Центральный виджет
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(15)
         
         # Заголовок и панель управления
         header_layout = QHBoxLayout()
         
-        title = QLabel("📊 МОНИТОРИНГ СТАТУСОВ В РЕАЛЬНОМ ВРЕМЕНИ")
+        title = QLabel("📺 МОНИТОРИНГ СТАТУСОВ В РЕАЛЬНОМ ВРЕМЕНИ")
         title_font = QFont()
-        title_font.setPointSize(16)
+        title_font.setPointSize(18)
         title_font.setBold(True)
         title.setFont(title_font)
         header_layout.addWidget(title)
@@ -136,19 +144,55 @@ class RealtimeMonitorTab(QWidget):
         
         # Статус обновления
         self.status_label = QLabel("🟢 Активен")
-        self.status_label.setStyleSheet("color: #27ae60; font-weight: bold;")
+        self.status_label.setStyleSheet("color: #27ae60; font-weight: bold; font-size: 12px;")
         header_layout.addWidget(self.status_label)
         
-        # Время последнего обновления
+        # Время последнего обновления (московское)
         self.last_update_label = QLabel("Обновлено: --:--:--")
+        self.last_update_label.setStyleSheet("font-size: 11px; color: #7f8c8d;")
         header_layout.addWidget(self.last_update_label)
+        
+        # Текущее московское время
+        self.current_time_label = QLabel("МСК: --:--:--")
+        self.current_time_label.setStyleSheet("font-size: 11px; color: #34495e; font-weight: bold;")
+        header_layout.addWidget(self.current_time_label)
+        
+        # Таймер для отображения текущего времени
+        self.time_timer = QTimer(self)
+        self.time_timer.timeout.connect(self._update_current_time)
+        self.time_timer.start(1000)  # Обновляем каждую секунду
+        self._update_current_time()
         
         # Кнопки управления
         btn_refresh = QPushButton("🔄 Обновить")
+        btn_refresh.setStyleSheet("""
+            QPushButton {
+                padding: 6px 12px;
+                border-radius: 4px;
+                background-color: #3498db;
+                color: white;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #2980b9;
+            }
+        """)
         btn_refresh.clicked.connect(self._refresh_data)
         header_layout.addWidget(btn_refresh)
         
         btn_settings = QPushButton("⚙️ Настройки")
+        btn_settings.setStyleSheet("""
+            QPushButton {
+                padding: 6px 12px;
+                border-radius: 4px;
+                background-color: #95a5a6;
+                color: white;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #7f8c8d;
+            }
+        """)
         btn_settings.clicked.connect(self._open_settings)
         header_layout.addWidget(btn_settings)
         
@@ -160,22 +204,42 @@ class RealtimeMonitorTab(QWidget):
         line.setFrameShadow(QFrame.Sunken)
         main_layout.addWidget(line)
         
-        # Статистика (карточки)
-        stats_layout = QHBoxLayout()
+        # Дашборд (карточки статистики)
+        dashboard_layout = QHBoxLayout()
+        dashboard_layout.setSpacing(15)
         
-        self.total_users_card = self._create_stat_card("Всего пользователей", "0", "#3498db")
-        stats_layout.addWidget(self.total_users_card)
+        self.working_now_card = self._create_dashboard_card(
+            "Сейчас работают", "0", "#27ae60"
+        )
+        dashboard_layout.addWidget(self.working_now_card)
         
-        self.active_users_card = self._create_stat_card("Активных", "0", "#27ae60")
-        stats_layout.addWidget(self.active_users_card)
+        self.on_break_card = self._create_dashboard_card(
+            "В перерыве", "0", "#f39c12"
+        )
+        dashboard_layout.addWidget(self.on_break_card)
         
-        self.on_break_card = self._create_stat_card("В перерыве", "0", "#f39c12")
-        stats_layout.addWidget(self.on_break_card)
+        self.on_lunch_card = self._create_dashboard_card(
+            "На обеде", "0", "#e67e22"
+        )
+        dashboard_layout.addWidget(self.on_lunch_card)
         
-        self.over_limit_card = self._create_stat_card("Превышают лимит", "0", "#e74c3c")
-        stats_layout.addWidget(self.over_limit_card)
+        self.over_limit_card = self._create_dashboard_card(
+            "Превышают лимит", "0", "#e74c3c"
+        )
+        dashboard_layout.addWidget(self.over_limit_card)
         
-        main_layout.addLayout(stats_layout)
+        self.total_card = self._create_dashboard_card(
+            "Всего активных", "0", "#3498db"
+        )
+        dashboard_layout.addWidget(self.total_card)
+        
+        main_layout.addLayout(dashboard_layout)
+        
+        # Разделитель
+        line2 = QFrame()
+        line2.setFrameShape(QFrame.HLine)
+        line2.setFrameShadow(QFrame.Sunken)
+        main_layout.addWidget(line2)
         
         # Фильтры
         filters_layout = QHBoxLayout()
@@ -220,35 +284,39 @@ class RealtimeMonitorTab(QWidget):
         self.monitor_table.setAlternatingRowColors(True)
         self.monitor_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.monitor_table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.monitor_table.setSortingEnabled(True)
+        self.monitor_table.setSortingEnabled(False)  # Сортировка через настройки
         
         table_layout.addWidget(self.monitor_table)
         table_group.setLayout(table_layout)
         main_layout.addWidget(table_group)
     
-    def _create_stat_card(self, title: str, value: str, color: str) -> QGroupBox:
-        """Создает карточку статистики"""
+    def _create_dashboard_card(self, title: str, value: str, color: str) -> QGroupBox:
+        """Создает карточку дашборда"""
         card = QGroupBox(title)
         card.setStyleSheet(f"""
             QGroupBox {{
                 border: 2px solid {color};
                 border-radius: 8px;
-                margin-top: 10px;
-                padding-top: 10px;
+                margin-top: 12px;
+                padding-top: 12px;
                 font-weight: bold;
+                background-color: #f8f9fa;
             }}
             QGroupBox::title {{
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 5px;
+                color: {color};
+                font-size: 13px;
             }}
         """)
         
         layout = QVBoxLayout()
+        layout.setContentsMargins(10, 5, 10, 10)
         
         value_label = QLabel(value)
         value_font = QFont()
-        value_font.setPointSize(24)
+        value_font.setPointSize(28)
         value_font.setBold(True)
         value_label.setFont(value_font)
         value_label.setAlignment(Qt.AlignCenter)
@@ -256,12 +324,23 @@ class RealtimeMonitorTab(QWidget):
         layout.addWidget(value_label)
         
         card.setLayout(layout)
-        card.setMinimumHeight(80)
+        card.setMinimumHeight(100)
+        card.setMinimumWidth(200)
         
         # Сохраняем ссылку на label для обновления
-        setattr(self, f"{title.lower().replace(' ', '_')}_value", value_label)
+        setattr(self, f"{title.lower().replace(' ', '_').replace('/', '_')}_value", value_label)
         
         return card
+    
+    def _update_current_time(self):
+        """Обновляет отображение текущего московского времени"""
+        try:
+            from shared.time_utils import now_moscow
+            moscow_now = now_moscow()
+            time_str = moscow_now.strftime('%H:%M:%S')
+            self.current_time_label.setText(f"МСК: {time_str}")
+        except Exception as e:
+            logger.debug(f"Failed to update current time: {e}")
     
     def _start_monitoring(self):
         """Запускает автоматическое обновление"""
@@ -351,11 +430,11 @@ class RealtimeMonitorTab(QWidget):
                 }
             
             # Обновляем интерфейс
-            self._update_statistics()
+            self._update_dashboard()
             self._update_table()
             self._update_filters()
             
-            # Обновляем время последнего обновления
+            # Обновляем время последнего обновления (московское)
             self.last_update_time = datetime.now()
             moscow_time = format_time_moscow(self.last_update_time, '%H:%M:%S')
             self.last_update_label.setText(f"Обновлено: {moscow_time}")
@@ -363,10 +442,10 @@ class RealtimeMonitorTab(QWidget):
         except Exception as e:
             logger.error(f"Error refreshing monitor data: {e}", exc_info=True)
             self.status_label.setText("🔴 Ошибка")
-            self.status_label.setStyleSheet("color: #e74c3c; font-weight: bold;")
+            self.status_label.setStyleSheet("color: #e74c3c; font-weight: bold; font-size: 12px;")
     
     def _calculate_time_in_status(self, login_time_str: str, status: str) -> str:
-        """Вычисляет время пребывания в статусе"""
+        """Вычисляет время пребывания в статусе (московское время)"""
         if not login_time_str:
             return "00:00:00"
         
@@ -382,10 +461,11 @@ class RealtimeMonitorTab(QWidget):
                 return "00:00:00"
             
             # Текущее время в московском
-            now_moscow = datetime.now(login_time_moscow.tzinfo)
+            from shared.time_utils import now_moscow
+            now_moscow_dt = now_moscow()
             
             # Вычисляем разницу
-            delta = now_moscow - login_time_moscow
+            delta = now_moscow_dt - login_time_moscow
             
             hours = int(delta.total_seconds() // 3600)
             minutes = int((delta.total_seconds() % 3600) // 60)
@@ -397,17 +477,44 @@ class RealtimeMonitorTab(QWidget):
             logger.warning(f"Failed to calculate time in status: {e}")
             return "00:00:00"
     
-    def _update_statistics(self):
-        """Обновляет карточки статистики"""
-        total_users = len(self.users_data)
-        active_users = len([u for u in self.users_data.values() if u['status'] != 'finished'])
-        on_break = len([u for u in self.users_data.values() if u['break_type']])
-        over_limit = len([u for u in self.users_data.values() if u['is_over_limit']])
+    def _update_dashboard(self):
+        """Обновляет карточки дашборда"""
+        # Сейчас работают (активные сессии, не в перерыве/обеде)
+        working_now = len([
+            u for u in self.users_data.values() 
+            if u['status'] not in ('finished', 'completed', 'kicked') 
+            and not u['break_type']
+        ])
         
-        self.total_users_card.findChild(QLabel).setText(str(total_users))
-        self.active_users_card.findChild(QLabel).setText(str(active_users))
+        # В перерыве
+        on_break = len([
+            u for u in self.users_data.values() 
+            if u['break_type'] == 'Перерыв'
+        ])
+        
+        # На обеде
+        on_lunch = len([
+            u for u in self.users_data.values() 
+            if u['break_type'] == 'Обед'
+        ])
+        
+        # Превышают лимит
+        over_limit = len([
+            u for u in self.users_data.values() 
+            if u['is_over_limit']
+        ])
+        
+        # Всего активных
+        total_active = len([
+            u for u in self.users_data.values() 
+            if u['status'] not in ('finished', 'completed', 'kicked')
+        ])
+        
+        self.working_now_card.findChild(QLabel).setText(str(working_now))
         self.on_break_card.findChild(QLabel).setText(str(on_break))
+        self.on_lunch_card.findChild(QLabel).setText(str(on_lunch))
         self.over_limit_card.findChild(QLabel).setText(str(over_limit))
+        self.total_card.findChild(QLabel).setText(str(total_active))
     
     def _update_table(self):
         """Обновляет таблицу мониторинга"""
@@ -428,11 +535,16 @@ class RealtimeMonitorTab(QWidget):
         if self.settings['show_active_only']:
             filtered_data = [u for u in filtered_data if u['status'] not in ('finished', 'completed', 'kicked')]
         
-        # Сортируем по группе, затем по имени
-        if self.settings['group_by_group']:
-            filtered_data.sort(key=lambda x: (x['group'], x['name']))
-        else:
+        # Сортировка согласно настройкам
+        sort_by = self.settings.get('sort_by', 'По ФИО')
+        if sort_by == 'По ФИО':
             filtered_data.sort(key=lambda x: x['name'])
+        elif sort_by == 'По статусу':
+            filtered_data.sort(key=lambda x: x['status'])
+        elif sort_by == 'По группам':
+            filtered_data.sort(key=lambda x: (x['group'], x['name']))
+        elif sort_by == 'По времени залогинивания':
+            filtered_data.sort(key=lambda x: x['login_time'] or '', reverse=True)
         
         # Заполняем таблицу
         self.monitor_table.setRowCount(len(filtered_data))
@@ -455,7 +567,7 @@ class RealtimeMonitorTab(QWidget):
             status_item.setFont(QFont("Arial", 10, QFont.Bold))
             self.monitor_table.setItem(row, 2, status_item)
             
-            # Время в статусе
+            # Время в статусе (московское)
             time_item = QTableWidgetItem(user_data['time_in_status'])
             self.monitor_table.setItem(row, 3, time_item)
             
@@ -469,7 +581,7 @@ class RealtimeMonitorTab(QWidget):
                 break_item = QTableWidgetItem("—")
             self.monitor_table.setItem(row, 4, break_item)
             
-            # Время перерыва
+            # Время перерыва (московское)
             if break_type and user_data['break_start']:
                 break_start_moscow = format_time_moscow(user_data['break_start'], '%H:%M')
                 break_duration = user_data['break_duration']
@@ -505,7 +617,7 @@ class RealtimeMonitorTab(QWidget):
         
         # Обновляем статус
         self.status_label.setText("🟢 Активен")
-        self.status_label.setStyleSheet("color: #27ae60; font-weight: bold;")
+        self.status_label.setStyleSheet("color: #27ae60; font-weight: bold; font-size: 12px;")
     
     def _get_status_color(self, status: str) -> str:
         """Возвращает цвет для статуса"""
@@ -557,14 +669,7 @@ class RealtimeMonitorTab(QWidget):
     def _open_settings(self):
         """Открывает диалог настроек"""
         dialog = MonitorSettingsDialog(self)
-        
-        # Устанавливаем текущие значения
-        dialog.update_interval.setValue(self.settings['update_interval'])
-        dialog.show_active_only.setChecked(self.settings['show_active_only'])
-        dialog.group_by_group.setChecked(self.settings['group_by_group'])
-        index = dialog.color_scheme.findText(self.settings['color_scheme'])
-        if index >= 0:
-            dialog.color_scheme.setCurrentIndex(index)
+        dialog.set_settings(self.settings)
         
         if dialog.exec_() == QDialog.Accepted:
             new_settings = dialog.get_settings()
@@ -574,7 +679,45 @@ class RealtimeMonitorTab(QWidget):
             self._stop_monitoring()
             self._start_monitoring()
             
-            # Обновляем таблицу с новыми фильтрами
+            # Обновляем таблицу с новыми настройками сортировки
             self._update_table()
             
             logger.info(f"Settings updated: {self.settings}")
+
+
+def run_monitor(repo=None, break_manager=None):
+    """
+    Запускает отдельное окно мониторинга
+    
+    Args:
+        repo: Экземпляр AdminRepo (если None, создается новый)
+        break_manager: Экземпляр BreakManager (если None, создается новый)
+    """
+    import sys
+    from pathlib import Path
+    
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(PROJECT_ROOT))
+    
+    # Импорты
+    if repo is None:
+        from admin_app.repo import AdminRepo
+        repo = AdminRepo()
+    
+    if break_manager is None:
+        from admin_app.break_manager import BreakManager
+        break_manager = BreakManager(repo.sheets)
+    
+    # Создаем приложение
+    app = QApplication(sys.argv)
+    
+    # Создаем окно мониторинга
+    window = RealtimeMonitorWindow(repo, break_manager)
+    window.show()
+    
+    # Запускаем приложение
+    sys.exit(app.exec_())
+
+
+if __name__ == "__main__":
+    run_monitor()
