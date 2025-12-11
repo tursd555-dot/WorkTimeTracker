@@ -282,7 +282,7 @@ class SupabaseAPI:
             
             if response.data:
                 status = (response.data[0].get('status') or '').strip().lower()
-                logger.debug(f"Session status for {email_lower}/{session_id_str}: {status}")
+                logger.info(f"Session status for {email_lower}/{session_id_str}: {status}")  # INFO для отладки
                 return status if status else 'unknown'
             
             # Если точного совпадения нет, ищем по email (последняя сессия)
@@ -295,7 +295,7 @@ class SupabaseAPI:
             
             if response.data:
                 status = (response.data[0].get('status') or '').strip().lower()
-                logger.debug(f"Session status for {email_lower} (by email only): {status}")
+                logger.info(f"Session status for {email_lower} (by email only): {status}")  # INFO для отладки
                 return status if status else 'unknown'
             
             logger.debug(f"No session found for {email_lower}/{session_id_str}")
@@ -384,10 +384,25 @@ class SupabaseAPI:
             
             # Обновляем сессию в work_sessions
             try:
-                self.client.table('work_sessions')\
+                logger.info(f"Updating session {session_id_to_update} with status='{status}', logout_time='{logout_time_str}'")
+                update_response = self.client.table('work_sessions')\
                     .update(update_data)\
                     .eq('session_id', session_id_to_update)\
                     .execute()
+                
+                logger.info(f"Update response: {len(update_response.data)} rows updated")
+                
+                # Проверяем, что статус действительно обновился
+                verify_response = self.client.table('work_sessions')\
+                    .select('status')\
+                    .eq('session_id', session_id_to_update)\
+                    .execute()
+                
+                if verify_response.data:
+                    actual_status = verify_response.data[0].get('status', '')
+                    logger.info(f"Verified status after update: '{actual_status}' (expected: '{status}')")
+                    if actual_status.lower() != status.lower():
+                        logger.warning(f"Status mismatch! Expected '{status}', got '{actual_status}'")
                 
                 logger.info(f"Successfully kicked session {session_id_to_update} for {email}")
                 return True
