@@ -780,6 +780,15 @@ class EmployeeApp(QWidget):
         self._sync_wait_timer.start()
 
     def closeEvent(self, event):
+        """Обработчик закрытия приложения - завершает активный перерыв"""
+        # Завершаем активный перерыв при закрытии приложения
+        try:
+            from shared.break_status_integration import on_logout
+            logger.info(f"Closing application, ending active break for {self.email}")
+            on_logout(self.email)
+        except Exception as e:
+            logger.error(f"Error ending break on close: {e}")
+        
         """Обработка закрытия через крестик"""
         # Автозавершение активного перерыва
         if hasattr(self, 'current_status') and self.current_status in ["Перерыв", "Обед"]:

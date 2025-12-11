@@ -1323,7 +1323,9 @@ class BreakManager:
                 - BreakType  
                 - StartTime
                 - Duration (текущая длительность в минутах)
-                - is_over_limit (bool): превышен ли лимит
+                - is_over_limit (bool): превышен ли лимит времени
+                - is_violator (bool): является ли нарушителем
+                - violation_reason (str): причина нарушения (если есть)
         """
         try:
             ws = self.sheets.get_worksheet(self.USAGE_LOG_SHEET)
@@ -1390,14 +1392,47 @@ class BreakManager:
                             if break_type == "Обед":
                                 limit_minutes = 60
                             
+                            # Определяем нарушителя
+                            is_violator = False
+                            violation_reasons = []
+                            
+                            # 1. Проверка: нет назначенного шаблона
+                            if not schedule:
+                                is_violator = True
+                                violation_reasons.append("Нет назначенного шаблона")
+                            
+                            # 2. Проверка: превышено количество слотов за сегодня
                             if schedule:
                                 limit = next((l for l in schedule.limits if l.break_type == break_type), None)
                                 if limit:
                                     limit_minutes = limit.time_minutes
+                                    today_count = self._count_breaks_today(email, break_type)
+                                    if today_count > limit.daily_count:
+                                        is_violator = True
+                                        violation_reasons.append(f"Превышено количество ({today_count}/{limit.daily_count})")
+                                
+                                # 3. Проверка: перерыв вне временного окна
+                                if schedule.windows:
+                                    current_time = datetime.now().time()
+                                    in_window = False
+                                    for window in schedule.windows:
+                                        if window.break_type == break_type and window.is_within(current_time):
+                                            in_window = True
+                                            break
+                                    if not in_window:
+                                        is_violator = True
+                                        violation_reasons.append("Перерыв вне временного окна")
                             
+                            # 4. Проверка: превышен лимит времени
                             is_over_limit = duration > limit_minutes
+                            if is_over_limit:
+                                is_violator = True
+                                violation_reasons.append(f"Превышен лимит времени ({duration}/{limit_minutes} мин)")
                         except Exception as e:
                             logger.warning(f"Failed to calculate duration for {email}: {e}")
+                            is_violator = False
+                            violation_reasons = []
+                            is_over_limit = False
                     
                     active.append({
                         'Email': email,
@@ -1405,7 +1440,9 @@ class BreakManager:
                         'BreakType': break_type,
                         'StartTime': start_time_str,
                         'Duration': duration,
-                        'is_over_limit': is_over_limit
+                        'is_over_limit': is_over_limit,
+                        'is_violator': is_violator,
+                        'violation_reason': '; '.join(violation_reasons) if violation_reasons else None
                     })
             
             return active

@@ -113,34 +113,41 @@ class BreakStatusIntegration:
         - Принудительном logout из админки
         - Завершении смены пользователем
         - Автоматическом logout
+        - Закрытии приложения
         """
         try:
-            # Проверяем есть ли активный перерыв
-            if email not in self.active_breaks:
-                logger.debug(f"No active break for {email} on logout")
-                return True
+            # Проверяем есть ли активный перерыв в памяти
+            break_type_from_memory = None
+            if email in self.active_breaks:
+                break_info = self.active_breaks[email]
+                break_type_from_memory = break_info['break_type']
+                logger.info(f"Found active break in memory for {email}: {break_type_from_memory}")
             
-            break_info = self.active_breaks[email]
-            break_type = break_info['break_type']
+            # Также проверяем активный перерыв в базе данных (на случай если память не синхронизирована)
+            # Пробуем завершить перерыв для обоих типов
+            for break_type in ["Перерыв", "Обед"]:
+                try:
+                    # Проверяем есть ли активный перерыв в БД
+                    active_break = self.break_mgr._get_active_break(email, break_type)
+                    if active_break:
+                        logger.info(f"Auto-ending break on logout for {email}: {break_type}")
+                        
+                        # Завершаем перерыв
+                        success, error, duration = self.break_mgr.end_break(
+                            email=email,
+                            break_type=break_type
+                        )
+                        
+                        if success:
+                            logger.info(f"Break auto-ended on logout for {email}: {break_type}, duration={duration} minutes")
+                        else:
+                            logger.warning(f"Failed to end break on logout for {email}: {error}")
+                except Exception as e:
+                    logger.debug(f"Error checking/ending break {break_type} for {email}: {e}")
             
-            logger.info(f"Auto-ending break on logout for {email}: {break_type}")
-            
-            # Завершаем перерыв
-            success, error, duration = self.break_mgr.end_break(
-                email=email,
-                break_type=break_type
-            )
-            
-            if not success:
-                logger.error(f"Failed to end break on logout for {email}: {error}")
-                # Принудительно удаляем из активных (чтобы не "зависнуть")
-                self.active_breaks.pop(email, None)
-                return False
-            
-            # Удаляем из активных
+            # Удаляем из активных в памяти
             self.active_breaks.pop(email, None)
             
-            logger.info(f"Break auto-ended on logout for {email}: {duration} minutes")
             return True
             
         except Exception as e:
