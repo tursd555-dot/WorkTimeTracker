@@ -226,7 +226,7 @@ class LoginWindow(QDialog):
                 self.accept()
             else:
                 error_msg = "Пользователь не найден. Проверьте email или обратитесь к администратору."
-                logger.error(f"LoginWindow: {error_msg}")
+                logger.warning(f"LoginWindow: пользователь '{email}' не найден в базе")
                 self._show_error_once(error_msg)
                 self.login_failed.emit(error_msg)
 
@@ -248,22 +248,17 @@ class LoginWindow(QDialog):
         self.status_label.setText("Идет проверка данных..." if loading else "")
 
     def _show_error_once(self, message: str):
-        logger.debug(f"LoginWindow: _show_error_once вызван с message='{message}', _showing_error={self._showing_error}")
         if self._showing_error:
-            logger.warning("LoginWindow: попытка повторного показа ошибки, пропуск")
             return
         self._showing_error = True
-        logger.info(f"LoginWindow: показываем QMessageBox.warning с текстом: {message}")
         QMessageBox.warning(self, "Ошибка", message)
         self.status_label.setText(f'<span style="color: red;">{message}</span>')
         self._showing_error = False
 
     def keyPressEvent(self, event):
-        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
-            logger.debug("LoginWindow: нажатие Enter/Return, пробуем логин")
-            self._try_login()
-        else:
-            super().keyPressEvent(event)
+        # Enter/Return уже обрабатывается через returnPressed сигнал email_input
+        # Не дублируем вызов _try_login здесь
+        super().keyPressEvent(event)
 
     def show_from_main_window(self):
         """Метод для показа окна входа после выхода из главного окна"""

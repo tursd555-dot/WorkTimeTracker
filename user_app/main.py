@@ -229,7 +229,10 @@ class ApplicationManager(QObject):
             self.quit_application()
 
     def handle_login_failed(self, message: str):
-        self._show_error("Login Failed", message)
+        # Ошибка уже показана в LoginWindow через _show_error_once()
+        # Здесь только логируем для отладки (debug уровень, чтобы не дублировать)
+        logger = logging.getLogger(__name__)
+        logger.debug("Login failed signal received: %s", message)
 
     # --- Общее ---
     def _show_error(self, title: str, message: str):
