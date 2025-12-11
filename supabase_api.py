@@ -197,6 +197,47 @@ class SupabaseAPI:
         """Получить все активные сессии (совместимость с sheets_api)"""
         return self.get_active_sessions()
     
+    def get_active_session(self, email: str) -> Optional[Dict[str, str]]:
+        """
+        Получить активную сессию пользователя по email.
+        
+        Args:
+            email: Email пользователя
+        
+        Returns:
+            Словарь с данными сессии или None если не найдена
+        """
+        try:
+            email_lower = (email or "").strip().lower()
+            
+            response = self.client.table('active_sessions')\
+                .select('*')\
+                .eq('email', email_lower)\
+                .eq('status', 'active')\
+                .order('login_time', desc=True)\
+                .limit(1)\
+                .execute()
+            
+            if response.data:
+                session = response.data[0]
+                # Преобразуем в формат, совместимый с sheets_api
+                return {
+                    'Email': session.get('email', ''),
+                    'Name': session.get('name', ''),
+                    'SessionID': session.get('session_id', ''),
+                    'LoginTime': session.get('login_time', ''),
+                    'Status': session.get('status', 'active'),
+                    'LogoutTime': session.get('logout_time', ''),
+                    'LogoutReason': session.get('logout_reason', ''),
+                    'RemoteCommand': session.get('remote_command', '')
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get active session for {email}: {e}")
+            return None
+    
     def check_user_session_status(self, email: str, session_id: str) -> str:
         """
         Проверяет статус указанной сессии пользователя в Supabase.
