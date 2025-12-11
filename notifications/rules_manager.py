@@ -9,6 +9,7 @@ from api_adapter import SheetsAPI
 from config import GOOGLE_SHEET_NAME
 
 log = logging.getLogger(__name__)
+logger = log  # Алиас для совместимости
 
 RULES_SHEET = "NotificationRules"
 HEADER = [
@@ -55,23 +56,49 @@ def _to_int(v: Any) -> Optional[int]:
         return None
 
 def ensure_sheet_exists(api: SheetsAPI):
-    ss = api.client.open(GOOGLE_SHEET_NAME)
-    titles = [w.title for w in ss.worksheets()]
-    if RULES_SHEET not in titles:
-        ws = ss.add_worksheet(title=RULES_SHEET, rows=1000, cols=len(HEADER))
-        api._request_with_retry(ws.update, "A1", [HEADER])
-        # пример: долгий «Обед» > 30 минут, персонально
-        api._request_with_retry(ws.append_rows, [[
-            1, "TRUE", "long_status", "personal", "", "Обед",
-            30, "", "", 1800, "FALSE",
-            "⏰ Длительный статус: <b>{status}</b> уже <b>{duration_min} мин</b> (порог {min_duration_min} мин)."
-        ]], value_input_option="USER_ENTERED")
+    # Для Supabase API эта функция не нужна (нет концепции "листов")
+    # Проверяем, является ли API Supabase API
+    if hasattr(api, 'client') and hasattr(api.client, 'table'):
+        # Это Supabase API - пропускаем проверку листов
+        logger.debug("Supabase API detected, skipping sheet existence check")
+        return
+    
+    # Для Google Sheets API проверяем наличие листа
+    try:
+        ss = api.client.open(GOOGLE_SHEET_NAME)
+        titles = [w.title for w in ss.worksheets()]
+        if RULES_SHEET not in titles:
+            ws = ss.add_worksheet(title=RULES_SHEET, rows=1000, cols=len(HEADER))
+            api._request_with_retry(ws.update, "A1", [HEADER])
+            # пример: долгий «Обед» > 30 минут, персонально
+            api._request_with_retry(ws.append_rows, [[
+                1, "TRUE", "long_status", "personal", "", "Обед",
+                30, "", "", 1800, "FALSE",
+                "⏰ Длительный статус: <b>{status}</b> уже <b>{duration_min} мин</b> (порог {min_duration_min} мин)."
+            ]], value_input_option="USER_ENTERED")
+    except AttributeError:
+        # API не поддерживает client.open (например, Supabase)
+        logger.debug("API does not support client.open, skipping sheet existence check")
+        return
 
 def load_rules() -> List[Rule]:
     api = SheetsAPI()
     ensure_sheet_exists(api)
-    ws = api.client.open(GOOGLE_SHEET_NAME).worksheet(RULES_SHEET)
-    rows = api._request_with_retry(ws.get_all_values) or []
+    
+    # Для Supabase API правила пока не поддерживаются (нет концепции "листов")
+    if hasattr(api, 'client') and hasattr(api.client, 'table'):
+        # Это Supabase API - возвращаем пустой список правил
+        log.debug("Supabase API detected, rules not supported yet")
+        return []
+    
+    # Для Google Sheets API загружаем правила
+    try:
+        ws = api.client.open(GOOGLE_SHEET_NAME).worksheet(RULES_SHEET)
+        rows = api._request_with_retry(ws.get_all_values) or []
+    except AttributeError:
+        # API не поддерживает client.open (например, Supabase)
+        log.debug("API does not support client.open, returning empty rules")
+        return []
     if not rows:
         return []
     hdr = [h.strip() for h in rows[0]]
@@ -118,8 +145,19 @@ def save_rules(rows: List[List[Any]]) -> None:
     """Сохранить полный набор правил (с заголовком) — используем из админ-панели."""
     api = SheetsAPI()
     ensure_sheet_exists(api)
-    ws = api.client.open(GOOGLE_SHEET_NAME).worksheet(RULES_SHEET)
-    # Очистим и запишем заново
-    api._request_with_retry(ws.clear)
-    out = [HEADER] + rows
-    api._request_with_retry(ws.update, "A1", out)
+    
+    # Для Supabase API правила пока не поддерживаются
+    if hasattr(api, 'client') and hasattr(api.client, 'table'):
+        log.debug("Supabase API detected, rules not supported yet")
+        return
+    
+    # Для Google Sheets API сохраняем правила
+    try:
+        ws = api.client.open(GOOGLE_SHEET_NAME).worksheet(RULES_SHEET)
+        # Очистим и запишем заново
+        api._request_with_retry(ws.clear)
+        out = [HEADER] + rows
+        api._request_with_retry(ws.update, "A1", out)
+    except AttributeError:
+        log.debug("API does not support client.open, skipping rule save")
+        return
