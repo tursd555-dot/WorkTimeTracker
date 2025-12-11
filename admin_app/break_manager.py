@@ -908,8 +908,9 @@ class BreakManager:
                 "Active"  # Status
             ]
             
-            self.sheets._request_with_retry(lambda: ws.append_row(row))
-            logger.info(f"✅ Break logged to BreakLog: {email}, {break_type}")
+            logger.debug(f"Logging break start: email={email}, break_type={break_type}, start_time={start_time}, row={row}")
+            result = self.sheets._request_with_retry(lambda: ws.append_row(row))
+            logger.info(f"✅ Break logged to BreakLog: {email}, {break_type}, result={result}")
             
         except Exception as e:
             logger.error(f"❌ Failed to log break start: {e}")
@@ -1235,15 +1236,22 @@ class BreakManager:
             
             # Ищем записи без EndTime за сегодня (или со статусом Active)
             active = []
+            logger.debug(f"Checking for active breaks. Total rows: {len(rows)}, Today: {today}")
+            
             for row in rows:
                 end_time = row.get('EndTime') or row.get('end_time') or ''
                 status = row.get('Status') or row.get('status') or ''
-                start_time_str = row.get('StartTime') or row.get('start_time') or ''
+                start_time_str = str(row.get('StartTime') or row.get('start_time') or '')
                 
                 # Перерыв активен если: нет EndTime И (Status = 'Active' ИЛИ Status пустой)
                 is_active = (not end_time or end_time == '') and (status == 'Active' or status == '' or not status)
+                is_today = start_time_str.startswith(today)
                 
-                if (is_active and start_time_str.startswith(today)):
+                logger.debug(f"Row check: email={row.get('Email') or row.get('email')}, "
+                           f"start_time={start_time_str}, end_time={end_time}, status={status}, "
+                           f"is_active={is_active}, is_today={is_today}")
+                
+                if (is_active and is_today):
                     
                     email = row.get('Email') or row.get('email') or ''
                     break_type = row.get('BreakType') or row.get('break_type') or ''

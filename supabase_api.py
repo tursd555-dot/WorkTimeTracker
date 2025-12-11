@@ -230,6 +230,12 @@ class SupabaseAPI:
                 logger.debug(f"Formatted row: {formatted_row}")
             
             logger.info(f"Read {len(rows)} rows from {table_name}")
+            
+            # Дополнительное логирование для break_log
+            if table_name == "break_log" and rows:
+                logger.debug(f"break_log sample row keys: {list(rows[0].keys()) if rows else 'no rows'}")
+                logger.debug(f"break_log sample row: {rows[0] if rows else 'no rows'}")
+            
             return rows
         except Exception as e:
             logger.error(f"Failed to read table {getattr(worksheet, 'table_name', 'unknown')}: {e}", exc_info=True)
