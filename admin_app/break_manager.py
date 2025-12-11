@@ -1295,11 +1295,15 @@ class BreakManager:
         windows_list = []
         
         for slot in slots_data:
-            slot_type = slot.get('slot_type', 'Перерыв')
-            duration = slot.get('duration', 15)
+            # Поддерживаем оба варианта ключей: 'type' (из диалога) и 'slot_type' (старый формат)
+            slot_type = slot.get('type') or slot.get('slot_type') or 'Перерыв'
+            # duration может быть строкой или числом
+            duration_val = slot.get('duration', 15)
+            duration = int(duration_val) if isinstance(duration_val, (int, str)) and str(duration_val).isdigit() else 15
             window_start = slot.get('window_start', '09:00')
             window_end = slot.get('window_end', '17:00')
-            order = slot.get('order', 1)
+            order_val = slot.get('order', 1)
+            order = int(order_val) if isinstance(order_val, (int, str)) and str(order_val).isdigit() else 1
             
             # Лимиты
             if slot_type not in limits_dict:
@@ -1346,8 +1350,21 @@ class BreakManager:
         
         Фактически удаляет старый и создаёт новый
         """
-        # Удаляем старый
-        self.delete_schedule(schedule_id)
+        # Для Supabase удаляем по name, так как шаблоны группируются по name
+        # Проверяем, является ли это Supabase API
+        if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+            # Удаляем по name (в Supabase шаблоны группируются по name)
+            result = self.sheets._delete_rows_by_schedule_id("break_schedules", name)
+        else:
+            # Для Google Sheets удаляем по schedule_id
+            result = self.delete_schedule(schedule_id)
+        
+        if not result:
+            logger.warning(f"Failed to delete old schedule {name}, continuing anyway...")
+        
+        # Сбрасываем кэш
+        self._cache.pop(schedule_id, None)
+        self._cache.pop(name, None)
         
         # Создаём новый
         return self.create_schedule_template(

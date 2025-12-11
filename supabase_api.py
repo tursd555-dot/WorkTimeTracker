@@ -627,28 +627,40 @@ class SupabaseAPI:
                 
                 # Если не удалось по id, пробуем по name
                 try:
-                    # Сначала находим id по name
+                    # В Supabase шаблоны группируются по name, поэтому удаляем все записи с таким name
+                    # Сначала находим все записи с таким name
                     find_response = self.client.table(table_name)\
                         .select('id, name')\
                         .eq('name', schedule_id)\
                         .execute()
                     
                     if find_response.data:
-                        schedule_db_id = find_response.data[0]['id']
                         schedule_name = find_response.data[0].get('name')
                         
-                        # Удаляем по найденному id
+                        # Удаляем ВСЕ записи с таким name (и основную запись, и все слоты)
                         response = self.client.table(table_name)\
                             .delete()\
-                            .eq('id', schedule_db_id)\
+                            .eq('name', schedule_name)\
                             .execute()
                         
-                        if response.data:
-                            logger.info(f"Deleted schedule by name: {schedule_id} (id: {schedule_db_id})")
-                            # Также удаляем связанные слоты и назначения
-                            self._delete_schedule_slots(schedule_db_id)
-                            self._delete_schedule_assignments(schedule_db_id, schedule_id)
-                            return True
+                        deleted_count = len(response.data) if response.data else 0
+                        logger.info(f"Deleted {deleted_count} records for schedule '{schedule_name}' (name: {schedule_id})")
+                        
+                        # Также удаляем связанные назначения (по schedule_id или name)
+                        try:
+                            # Пробуем найти UUID шаблона для удаления назначений
+                            schedule_uuid = find_response.data[0].get('id')
+                            if schedule_uuid:
+                                assignments_response = self.client.table('user_break_assignments')\
+                                    .delete()\
+                                    .eq('schedule_id', schedule_uuid)\
+                                    .execute()
+                                if assignments_response.data:
+                                    logger.info(f"Deleted {len(assignments_response.data)} assignments for schedule '{schedule_name}'")
+                        except Exception as e:
+                            logger.debug(f"Could not delete assignments: {e}")
+                        
+                        return True
                 except Exception as e:
                     logger.debug(f"Could not delete by name: {e}")
                     pass
