@@ -331,12 +331,11 @@ class SupabaseAPI:
             else:
                 logout_time_str = str(logout_time)
             
-            # Формируем данные для обновления
+            # Формируем данные для обновления (без updated_at)
             update_data = {
                 'status': status,
                 'logout_time': logout_time_str,
-                'remote_command': remote_cmd,
-                'updated_at': datetime.now(timezone.utc).isoformat()
+                'remote_command': remote_cmd
             }
             
             # Ищем активные сессии пользователя
@@ -396,11 +395,11 @@ class SupabaseAPI:
             session_id_str = str(session_id).strip()
             logout_time_str = logout_time or datetime.now(timezone.utc).isoformat()
             
+            # Обновляем только существующие поля (без updated_at)
             update_data = {
                 'status': 'finished',
                 'logout_time': logout_time_str,
-                'logout_reason': reason,
-                'updated_at': datetime.now(timezone.utc).isoformat()
+                'logout_reason': reason
             }
             
             response = self.client.table('active_sessions')\
@@ -437,8 +436,7 @@ class SupabaseAPI:
             session_id_str = str(session_id).strip()
             
             update_data = {
-                'remote_command': '',  # Очищаем команду после подтверждения
-                'updated_at': datetime.now(timezone.utc).isoformat()
+                'remote_command': ''  # Очищаем команду после подтверждения
             }
             
             self.client.table('active_sessions')\
@@ -485,16 +483,21 @@ class SupabaseAPI:
             
             user_id = user_response.data[0]['id'] if user_response.data else None
             
+            # Формируем данные только с полями, которые есть в таблице Supabase
             data = {
                 'session_id': session_id,
                 'email': email_lower,
                 'name': name,
-                'user_id': user_id,
                 'login_time': login_time_str,
-                'status': 'active',
-                'created_at': datetime.now(timezone.utc).isoformat(),
-                'updated_at': datetime.now(timezone.utc).isoformat()
+                'status': 'active'
             }
+            
+            # Добавляем user_id только если он есть
+            if user_id:
+                data['user_id'] = user_id
+            
+            # Поля created_at и updated_at обычно управляются автоматически в Supabase
+            # Добавляем их только если они есть в схеме таблицы
             
             # Проверяем, существует ли уже сессия с таким session_id
             existing = self.client.table('active_sessions')\
