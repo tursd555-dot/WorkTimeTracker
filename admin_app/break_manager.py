@@ -365,6 +365,21 @@ class BreakManager:
                 window_end = row.get("WindowEnd") or row.get("window_end") or ""
                 order = row.get("Order") or row.get("priority") or row.get("order") or "1"
                 
+                # Проверяем, есть ли данные слота (либо в полях, либо в description как JSON)
+                description = row.get("Description") or row.get("description") or ""
+                if description and not slot_type:
+                    # Пробуем извлечь данные из JSON в description
+                    try:
+                        import json
+                        slot_info = json.loads(description)
+                        slot_type = slot_info.get('slot_type', '')
+                        duration = str(slot_info.get('duration', '15'))
+                        window_start = slot_info.get('window_start', '')
+                        window_end = slot_info.get('window_end', '')
+                        order = str(slot_info.get('priority', '1'))
+                    except (json.JSONDecodeError, KeyError, TypeError):
+                        pass
+                
                 if slot_type:  # Добавляем только если есть тип слота
                     schedules[sid]["slots_data"].append({
                         "order": str(order),
