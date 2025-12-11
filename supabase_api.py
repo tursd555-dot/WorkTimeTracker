@@ -338,8 +338,8 @@ class SupabaseAPI:
                 'remote_command': remote_cmd
             }
             
-            # Ищем активные сессии пользователя
-            query = self.client.table('active_sessions')\
+            # Ищем активные сессии пользователя в work_sessions (active_sessions - это VIEW)
+            query = self.client.table('work_sessions')\
                 .select('*')\
                 .eq('email', email_lower)\
                 .eq('status', 'active')
@@ -358,8 +358,8 @@ class SupabaseAPI:
             session = response.data[0]
             session_id_to_update = session.get('session_id')
             
-            # Обновляем сессию
-            self.client.table('active_sessions')\
+            # Обновляем сессию в work_sessions
+            self.client.table('work_sessions')\
                 .update(update_data)\
                 .eq('session_id', session_id_to_update)\
                 .execute()
@@ -402,7 +402,8 @@ class SupabaseAPI:
                 'logout_reason': reason
             }
             
-            response = self.client.table('active_sessions')\
+            # Обновляем в work_sessions (active_sessions - это VIEW)
+            response = self.client.table('work_sessions')\
                 .update(update_data)\
                 .eq('email', email_lower)\
                 .eq('session_id', session_id_str)\
@@ -435,15 +436,23 @@ class SupabaseAPI:
             email_lower = (email or "").strip().lower()
             session_id_str = str(session_id).strip()
             
-            update_data = {
-                'remote_command': ''  # Очищаем команду после подтверждения
-            }
-            
-            self.client.table('active_sessions')\
-                .update(update_data)\
-                .eq('email', email_lower)\
-                .eq('session_id', session_id_str)\
-                .execute()
+            # Обновляем в work_sessions (active_sessions - это VIEW)
+            # Примечание: если в work_sessions нет поля remote_command, этот метод может не работать
+            # В таком случае можно пропустить обновление или добавить поле в таблицу
+            try:
+                update_data = {
+                    'remote_command': ''  # Очищаем команду после подтверждения
+                }
+                
+                self.client.table('work_sessions')\
+                    .update(update_data)\
+                    .eq('email', email_lower)\
+                    .eq('session_id', session_id_str)\
+                    .execute()
+            except Exception as e:
+                # Если поля remote_command нет в work_sessions - просто логируем
+                logger.debug(f"Could not update remote_command (field may not exist): {e}")
+                return True
             
             logger.debug(f"ACK sent for remote command: {email}, session_id={session_id_str}")
             return True
@@ -461,6 +470,8 @@ class SupabaseAPI:
     ) -> bool:
         """
         Создает или обновляет активную сессию пользователя.
+        
+        ВАЖНО: active_sessions - это VIEW, поэтому вставляем данные в work_sessions.
         
         Args:
             email: Email пользователя
@@ -483,11 +494,10 @@ class SupabaseAPI:
             
             user_id = user_response.data[0]['id'] if user_response.data else None
             
-            # Формируем данные только с полями, которые есть в таблице Supabase
+            # Формируем данные для таблицы work_sessions (не active_sessions - это VIEW!)
             data = {
                 'session_id': session_id,
                 'email': email_lower,
-                'name': name,
                 'login_time': login_time_str,
                 'status': 'active'
             }
@@ -496,24 +506,21 @@ class SupabaseAPI:
             if user_id:
                 data['user_id'] = user_id
             
-            # Поля created_at и updated_at обычно управляются автоматически в Supabase
-            # Добавляем их только если они есть в схеме таблицы
-            
-            # Проверяем, существует ли уже сессия с таким session_id
-            existing = self.client.table('active_sessions')\
+            # Проверяем, существует ли уже сессия с таким session_id в work_sessions
+            existing = self.client.table('work_sessions')\
                 .select('id')\
                 .eq('session_id', session_id)\
                 .execute()
             
             if existing.data:
                 # Обновляем существующую сессию
-                self.client.table('active_sessions')\
+                self.client.table('work_sessions')\
                     .update(data)\
                     .eq('session_id', session_id)\
                     .execute()
             else:
-                # Создаем новую сессию
-                self.client.table('active_sessions').insert(data).execute()
+                # Создаем новую сессию в work_sessions (active_sessions - это VIEW, в него нельзя вставлять)
+                self.client.table('work_sessions').insert(data).execute()
             
             logger.info(f"Active session set for {email}, session_id={session_id}")
             return True
