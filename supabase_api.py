@@ -665,6 +665,44 @@ class SupabaseAPI:
                     logger.debug(f"Could not delete by name: {e}")
                     pass
                 
+                # Если не удалось удалить по name, возможно schedule_id это UUID из другой записи
+                # Пробуем найти шаблон по schedule_id как UUID и удалить по name найденного шаблона
+                try:
+                    # Ищем любую запись с таким id (может быть UUID одной из записей шаблона)
+                    find_by_id = self.client.table(table_name)\
+                        .select('name')\
+                        .eq('id', schedule_id)\
+                        .limit(1)\
+                        .execute()
+                    
+                    if find_by_id.data:
+                        found_name = find_by_id.data[0].get('name')
+                        if found_name:
+                            # Удаляем все записи с найденным name
+                            response = self.client.table(table_name)\
+                                .delete()\
+                                .eq('name', found_name)\
+                                .execute()
+                            
+                            deleted_count = len(response.data) if response.data else 0
+                            logger.info(f"Deleted {deleted_count} records for schedule '{found_name}' (found by UUID: {schedule_id})")
+                            
+                            # Удаляем назначения
+                            try:
+                                assignments_response = self.client.table('user_break_assignments')\
+                                    .delete()\
+                                    .eq('schedule_id', schedule_id)\
+                                    .execute()
+                                if assignments_response.data:
+                                    logger.info(f"Deleted {len(assignments_response.data)} assignments")
+                            except Exception as e:
+                                logger.debug(f"Could not delete assignments: {e}")
+                            
+                            return True
+                except Exception as e:
+                    logger.debug(f"Could not delete by UUID lookup: {e}")
+                    pass
+                
                 logger.warning(f"Could not delete schedule {schedule_id} from {table_name}")
                 return False
             else:

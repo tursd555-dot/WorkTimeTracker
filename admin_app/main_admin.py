@@ -736,12 +736,14 @@ class AdminWindow(QMainWindow):
         if not self._confirm(f"Удалить шаблон '{name}' (ScheduleID={schedule_id})?"):
             return
 
-        ok = self.break_mgr.delete_schedule_template(str(schedule_id))
+        # Для Supabase используем name для удаления, так как шаблоны группируются по name
+        # Для обратной совместимости пробуем и schedule_id, и name
+        ok = self.break_mgr.delete_schedule_template(str(name)) or self.break_mgr.delete_schedule_template(str(schedule_id))
         if ok:
-            self._info("🗑 Шаблон удалён из Google Sheets.")
+            self._info("🗑 Шаблон удалён.")
             self.refresh_templates()
         else:
-            self._warn("❌ Ошибка при удалении шаблона из таблицы.")
+            self._warn("❌ Ошибка при удалении шаблона.")
 
     def on_assign_schedule(self):
         """Назначает график сотруднику"""
