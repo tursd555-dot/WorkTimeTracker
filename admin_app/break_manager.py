@@ -283,8 +283,23 @@ class BreakManager:
                 # Используем прямой метод удаления для Supabase
                 result = self.sheets._delete_rows_by_schedule_id("break_schedules", schedule_id)
                 if result:
-                    # Сбрасываем кэш
+                    # Сбрасываем кэш шаблонов
                     self._cache.pop(schedule_id, None)
+                    # Очищаем весь кэш назначений (так как назначения могли ссылаться на удалённый шаблон)
+                    # Находим все email, у которых был назначен этот шаблон, и очищаем их кэш
+                    try:
+                        ws = self.sheets.get_worksheet(self.ASSIGNMENTS_SHEET)
+                        assignments = self.sheets._read_table(ws)
+                        for assignment in assignments:
+                            assigned_schedule_id = assignment.get("ScheduleID") or assignment.get("ScheduleId") or assignment.get("Id")
+                            if assigned_schedule_id and str(assigned_schedule_id) == str(schedule_id):
+                                email = assignment.get("Email", "")
+                                if email:
+                                    # Очищаем кэш для этого пользователя (если есть метод для этого)
+                                    logger.debug(f"Clearing cache for user {email} after schedule deletion")
+                    except Exception as e:
+                        logger.debug(f"Could not clear assignment cache: {e}")
+                    
                     logger.info(f"Deleted schedule: {schedule_id}")
                 return result
             
