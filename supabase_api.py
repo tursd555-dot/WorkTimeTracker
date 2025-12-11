@@ -331,12 +331,15 @@ class SupabaseAPI:
             else:
                 logout_time_str = str(logout_time)
             
-            # Формируем данные для обновления (без updated_at)
+            # Формируем данные для обновления
+            # Примечание: remote_command может отсутствовать в таблице work_sessions
             update_data = {
                 'status': status,
-                'logout_time': logout_time_str,
-                'remote_command': remote_cmd
+                'logout_time': logout_time_str
             }
+            
+            # Пытаемся добавить remote_command только если поле существует
+            # Если нет - просто обновим статус и logout_time
             
             # Ищем активные сессии пользователя в work_sessions (active_sessions - это VIEW)
             logger.debug(f"Searching for active session: email={email_lower}, session_id={session_id}")
@@ -374,13 +377,31 @@ class SupabaseAPI:
             session_id_to_update = session.get('session_id')
             
             # Обновляем сессию в work_sessions
-            self.client.table('work_sessions')\
-                .update(update_data)\
-                .eq('session_id', session_id_to_update)\
-                .execute()
-            
-            logger.info(f"Successfully kicked session {session_id_to_update} for {email}")
-            return True
+            try:
+                self.client.table('work_sessions')\
+                    .update(update_data)\
+                    .eq('session_id', session_id_to_update)\
+                    .execute()
+                
+                logger.info(f"Successfully kicked session {session_id_to_update} for {email}")
+                return True
+            except Exception as update_error:
+                # Если ошибка из-за remote_command - пробуем без него
+                error_msg = str(update_error)
+                if 'remote_command' in error_msg.lower():
+                    logger.debug(f"Field 'remote_command' not found, updating without it")
+                    update_data_minimal = {
+                        'status': status,
+                        'logout_time': logout_time_str
+                    }
+                    self.client.table('work_sessions')\
+                        .update(update_data_minimal)\
+                        .eq('session_id', session_id_to_update)\
+                        .execute()
+                    logger.info(f"Successfully kicked session {session_id_to_update} for {email} (without remote_command)")
+                    return True
+                else:
+                    raise
             
         except Exception as e:
             logger.error(f"Failed to kick active session for {email}: {e}", exc_info=True)
