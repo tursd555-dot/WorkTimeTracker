@@ -332,26 +332,21 @@ class BreakManager:
             ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
             rows = self.sheets._read_table(ws)
             
-            # Группируем по schedule_id (может быть UUID или строка)
-            # Также группируем по name для Supabase (где name используется как идентификатор)
+            # Группируем по name для Supabase (где name используется как идентификатор шаблона)
+            # В Supabase каждая запись имеет свой UUID, но шаблоны группируются по name
             schedules = {}
             for row in rows:
-                # Пробуем разные варианты ключей для schedule_id
-                sid = row.get("ScheduleID") or row.get("Id") or row.get("id")
-                name = row.get("Name", "")
-                
-                # Для Supabase используем name как идентификатор, если schedule_id нет
-                if not sid and name:
-                    sid = name
-                
-                if sid:
-                    sid = str(sid).strip()
-                if not sid:
+                name = row.get("Name", "").strip()
+                if not name:
                     continue
                 
-                if sid not in schedules:
-                    schedules[sid] = {
-                        "schedule_id": sid,
+                # Используем name как ключ для группировки
+                # Для schedule_id используем первый найденный UUID или name
+                if name not in schedules:
+                    # Ищем первый UUID для этого шаблона (из основной записи или первого слота)
+                    sid = row.get("ScheduleID") or row.get("Id") or row.get("id") or name
+                    schedules[name] = {
+                        "schedule_id": str(sid).strip(),
                         "name": name,
                         "shift_start": row.get("ShiftStart", "") or "",
                         "shift_end": row.get("ShiftEnd", "") or "",
@@ -367,6 +362,10 @@ class BreakManager:
                 
                 # Проверяем, есть ли данные слота (либо в полях, либо в description как JSON)
                 description = row.get("Description") or row.get("description") or ""
+                # Пропускаем основную запись (без description или с пустым description)
+                if not description or description.strip() == '':
+                    continue  # Это основная запись шаблона, не слот
+                
                 if description and not slot_type:
                     # Пробуем извлечь данные из JSON в description
                     try:
@@ -381,7 +380,7 @@ class BreakManager:
                         pass
                 
                 if slot_type:  # Добавляем только если есть тип слота
-                    schedules[sid]["slots_data"].append({
+                    schedules[name]["slots_data"].append({
                         "order": str(order),
                         "type": slot_type,
                         "duration": str(duration),

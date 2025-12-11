@@ -390,78 +390,71 @@ class SupabaseAPI:
                     # Проверяем, существует ли уже шаблон с таким именем
                     # Используем name как идентификатор шаблона
                     existing = self.client.table('break_schedules')\
-                        .select('id, name')\
+                        .select('id, name, description')\
                         .eq('name', name)\
-                        .limit(1)\
                         .execute()
                     
-                    schedule_db_id = None
-                    if existing.data:
-                        # Используем существующий шаблон
-                        schedule_db_id = existing.data[0]['id']
-                        logger.info(f"Using existing schedule: {schedule_db_id} for name '{name}'")
-                        
-                        # Обновляем shift_start и shift_end если они указаны (только для первой записи)
-                        # Проверяем, есть ли уже записи с этим schedule_id
-                        existing_slots = self.client.table('break_schedules')\
-                            .select('id')\
-                            .eq('name', name)\
-                            .limit(1)\
-                            .execute()
-                        
-                        if existing_slots.data:
-                            # Обновляем основную запись
-                            if shift_start or shift_end:
-                                update_data = {}
-                                if shift_start:
-                                    update_data['shift_start'] = shift_start
-                                if shift_end:
-                                    update_data['shift_end'] = shift_end
-                                if update_data:
-                                    self.client.table('break_schedules')\
-                                        .update(update_data)\
-                                        .eq('id', schedule_db_id)\
-                                        .execute()
-                    else:
-                        # Создаём новый шаблон
+                    # Проверяем, есть ли основная запись (без description или с пустым description)
+                    main_record = None
+                    for record in existing.data:
+                        desc = record.get('description')
+                        if not desc or desc.strip() == '':
+                            main_record = record
+                            break
+                    
+                    # Если основной записи нет, создаем её только при первом слоте
+                    if not main_record:
+                        # Создаём основную запись шаблона (без description)
                         schedule_data = {
                             'name': name,
                             'shift_start': shift_start,
                             'shift_end': shift_end,
-                            'is_active': True
+                            'is_active': True,
+                            'description': None  # Основная запись без description
                         }
                         schedule_response = self.client.table('break_schedules').insert(schedule_data).execute()
                         if schedule_response.data:
-                            schedule_db_id = schedule_response.data[0]['id']
-                            logger.info(f"Created new schedule: {schedule_db_id} for name '{name}'")
+                            main_record = schedule_response.data[0]
+                            logger.info(f"Created main schedule record: {main_record['id']} for name '{name}'")
+                    else:
+                        # Обновляем shift_start и shift_end основной записи, если они изменились
+                        update_data = {}
+                        if shift_start and main_record.get('shift_start') != shift_start:
+                            update_data['shift_start'] = shift_start
+                        if shift_end and main_record.get('shift_end') != shift_end:
+                            update_data['shift_end'] = shift_end
+                        if update_data:
+                            self.client.table('break_schedules')\
+                                .update(update_data)\
+                                .eq('id', main_record['id'])\
+                                .execute()
+                            logger.debug(f"Updated main schedule record: {update_data}")
                     
-                    if schedule_db_id:
-                        # Сохраняем слот как отдельную строку в break_schedules
-                        # Используем поле description для хранения данных слота в JSON формате
-                        # Это позволяет хранить слоты без изменения схемы БД
-                        import json
-                        slot_info = {
-                            'slot_type': slot_type,
-                            'duration': duration,
-                            'window_start': window_start,
-                            'window_end': window_end,
-                            'priority': priority
-                        }
-                        
-                        slot_data = {
-                            'name': name,  # Связь через name
-                            'shift_start': shift_start,
-                            'shift_end': shift_end,
-                            'description': json.dumps(slot_info),  # Храним данные слота в JSON
-                            'is_active': True
-                        }
-                        
-                        try:
-                            self.client.table('break_schedules').insert(slot_data).execute()
-                            logger.info(f"Created slot row: slot_type={slot_type}, duration={duration}, window={window_start}-{window_end}")
-                        except Exception as insert_error:
-                            logger.error(f"Failed to insert slot row: {insert_error}", exc_info=True)
-                            return False
+                    # Сохраняем слот как отдельную строку в break_schedules
+                    # Используем поле description для хранения данных слота в JSON формате
+                    import json
+                    slot_info = {
+                        'slot_type': slot_type,
+                        'duration': duration,
+                        'window_start': window_start,
+                        'window_end': window_end,
+                        'priority': priority
+                    }
+                    
+                    slot_data = {
+                        'name': name,  # Связь через name
+                        'shift_start': shift_start,
+                        'shift_end': shift_end,
+                        'description': json.dumps(slot_info),  # Храним данные слота в JSON
+                        'is_active': True
+                    }
+                    
+                    try:
+                        self.client.table('break_schedules').insert(slot_data).execute()
+                        logger.info(f"Created slot row: slot_type={slot_type}, duration={duration}, window={window_start}-{window_end}")
+                    except Exception as insert_error:
+                        logger.error(f"Failed to insert slot row: {insert_error}", exc_info=True)
+                        return False
                         
                         return True
                     
