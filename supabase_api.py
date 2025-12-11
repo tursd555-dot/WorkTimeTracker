@@ -580,10 +580,16 @@ class SupabaseAPI:
                         return False
                     
                     # Преобразуем timestamp в формат ISO, если нужно
-                    if timestamp and len(timestamp) == 19:  # Формат "YYYY-MM-DD HH:MM:SS"
-                        timestamp = timestamp.replace(" ", "T") + "+00:00"
-                    elif timestamp and len(timestamp) == 10:  # Формат "YYYY-MM-DD"
-                        timestamp = timestamp + "T00:00:00+00:00"
+                    if timestamp:
+                        if len(timestamp) == 19:  # Формат "YYYY-MM-DD HH:MM:SS"
+                            timestamp = timestamp.replace(" ", "T") + "+00:00"
+                        elif len(timestamp) == 10:  # Формат "YYYY-MM-DD"
+                            timestamp = timestamp + "T00:00:00+00:00"
+                        # Если уже в ISO формате, оставляем как есть
+                    else:
+                        # Если timestamp не указан, используем текущее время
+                        from datetime import datetime
+                        timestamp = datetime.now().isoformat() + "+00:00"
                     
                     violation_data = {
                         'timestamp': timestamp or datetime.now().isoformat(),

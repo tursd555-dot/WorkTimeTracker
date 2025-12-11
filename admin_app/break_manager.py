@@ -1168,9 +1168,12 @@ class BreakManager:
                 "pending"  # Status
             ]
             
-            self.sheets._request_with_retry(lambda: ws.append_row(row))
+            result = self.sheets._request_with_retry(lambda: ws.append_row(row))
             
-            logger.warning(f"Violation logged: {email}, {violation_type}, {severity}")
+            if result:
+                logger.warning(f"Violation logged: {email}, {violation_type}, {severity}")
+            else:
+                logger.error(f"Failed to log violation: {email}, {violation_type}, {severity}")
             
         except Exception as e:
             logger.error(f"Failed to log violation: {e}")
