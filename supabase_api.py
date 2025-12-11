@@ -116,7 +116,10 @@ class SupabaseAPI:
         
         try:
             table_name = worksheet.table_name
+            logger.debug(f"Reading table {table_name}")
             response = self.client.table(table_name).select('*').execute()
+            
+            logger.debug(f"Got {len(response.data)} rows from {table_name}")
             
             # Преобразуем данные в формат Google Sheets (с заглавными ключами)
             rows = []
@@ -125,10 +128,25 @@ class SupabaseAPI:
                 formatted_row = {}
                 for key, value in row.items():
                     # Преобразуем snake_case в PascalCase
-                    pascal_key = ''.join(word.capitalize() for word in key.split('_'))
+                    # schedule_id -> ScheduleId, но нужно ScheduleID
+                    # Используем специальный маппинг для известных полей
+                    key_mapping = {
+                        'schedule_id': 'ScheduleID',
+                        'shift_start': 'ShiftStart',
+                        'shift_end': 'ShiftEnd',
+                        'slot_type': 'SlotType',
+                        'window_start': 'WindowStart',
+                        'window_end': 'WindowEnd',
+                    }
+                    pascal_key = key_mapping.get(key)
+                    if not pascal_key:
+                        # Общий случай: snake_case -> PascalCase
+                        pascal_key = ''.join(word.capitalize() for word in key.split('_'))
                     formatted_row[pascal_key] = value
                 rows.append(formatted_row)
+                logger.debug(f"Formatted row: {formatted_row}")
             
+            logger.info(f"Read {len(rows)} rows from {table_name}")
             return rows
         except Exception as e:
             logger.error(f"Failed to read table {getattr(worksheet, 'table_name', 'unknown')}: {e}", exc_info=True)
@@ -169,8 +187,13 @@ class SupabaseAPI:
                         'window_end': str(values[7]),
                         'priority': int(values[8]) if values[8] else 1
                     }
-                    self.client.table(table_name).insert(data).execute()
+                    logger.info(f"Inserting into {table_name}: {data}")
+                    response = self.client.table(table_name).insert(data).execute()
+                    logger.info(f"Insert successful: {len(response.data)} rows inserted")
                     return True
+                else:
+                    logger.error(f"Invalid values length: {len(values)}, expected 9")
+                    return False
             else:
                 # Для других таблиц пока не реализовано
                 logger.warning(f"Table {table_name} insert not implemented yet")
