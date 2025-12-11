@@ -386,29 +386,32 @@ class BreakManager:
                             # Нужно найти UUID шаблона по его имени или ID
                             schedule_uuid = None
                             try:
-                                # Пробуем найти шаблон по id (если это уже UUID)
-                                try:
+                                import re
+                                uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+                                is_uuid = uuid_pattern.match(str(schedule_id).strip())
+                                
+                                if is_uuid:
+                                    # Это уже UUID, проверяем что шаблон существует
                                     find_schedule = self.sheets.client.table('break_schedules')\
                                         .select('id')\
                                         .eq('id', schedule_id)\
                                         .execute()
                                     if find_schedule.data:
                                         schedule_uuid = find_schedule.data[0]['id']
-                                except Exception:
-                                    pass
-                                
-                                # Если не нашли по UUID, пробуем найти по имени
-                                if not schedule_uuid:
+                                    else:
+                                        logger.error(f"Schedule UUID not found: {schedule_id}")
+                                        return False
+                                else:
+                                    # Это не UUID, ищем по имени
                                     find_schedule = self.sheets.client.table('break_schedules')\
                                         .select('id')\
                                         .eq('name', schedule_id)\
                                         .execute()
                                     if find_schedule.data:
                                         schedule_uuid = find_schedule.data[0]['id']
-                                
-                                if not schedule_uuid:
-                                    logger.error(f"Schedule not found for update: {schedule_id}")
-                                    return False
+                                    else:
+                                        logger.error(f"Schedule not found by name: {schedule_id}")
+                                        return False
                             except Exception as e:
                                 logger.error(f"Failed to find schedule UUID: {e}", exc_info=True)
                                 return False
