@@ -661,6 +661,86 @@ class SupabaseAPI:
         except Exception as e:
             logger.error(f"Failed to log user actions for {email}: {e}", exc_info=True)
             return False
+    
+    # ========================================================================
+    # VIOLATIONS (нарушения перерывов)
+    # ========================================================================
+    
+    def get_violations(
+        self,
+        email: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        violation_type: Optional[str] = None,
+        status: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Получить список нарушений перерывов.
+        
+        Args:
+            email: Фильтр по email пользователя
+            date_from: Начальная дата (ISO строка или YYYY-MM-DD)
+            date_to: Конечная дата (ISO строка или YYYY-MM-DD)
+            violation_type: Тип нарушения
+            status: Статус нарушения (pending, reviewed, resolved)
+        
+        Returns:
+            Список словарей с нарушениями
+        """
+        try:
+            query = self.client.table('violations').select('*')
+            
+            # Фильтр по email
+            if email:
+                query = query.eq('email', email.lower().strip())
+            
+            # Фильтр по дате начала
+            if date_from:
+                if len(date_from) == 10:  # Формат YYYY-MM-DD
+                    query = query.gte('timestamp', date_from)
+                else:
+                    query = query.gte('timestamp', date_from)
+            
+            # Фильтр по дате конца
+            if date_to:
+                if len(date_to) == 10:  # Формат YYYY-MM-DD
+                    # Включаем весь день - добавляем время 23:59:59
+                    query = query.lte('timestamp', f"{date_to}T23:59:59")
+                else:
+                    query = query.lte('timestamp', date_to)
+            
+            # Фильтр по типу нарушения
+            if violation_type:
+                query = query.eq('violation_type', violation_type)
+            
+            # Фильтр по статусу
+            if status:
+                query = query.eq('status', status)
+            
+            # Сортируем по дате (новые сначала)
+            response = query.order('timestamp', desc=True).execute()
+            
+            # Преобразуем в формат, совместимый с sheets_api
+            violations = []
+            for row in response.data:
+                violations.append({
+                    'Timestamp': row.get('timestamp', ''),
+                    'Email': row.get('email', ''),
+                    'ViolationType': row.get('violation_type', ''),
+                    'Details': row.get('details', ''),
+                    'Status': row.get('status', 'pending'),
+                    'SessionID': row.get('session_id', ''),
+                    'Severity': row.get('severity', 'INFO'),
+                    'BreakType': row.get('break_type', ''),
+                    'BreakID': row.get('break_id', ''),
+                    'OvertimeMinutes': row.get('overtime_minutes', 0)
+                })
+            
+            return violations
+            
+        except Exception as e:
+            logger.error(f"Failed to get violations: {e}", exc_info=True)
+            return []
 
 
 # ============================================================================
