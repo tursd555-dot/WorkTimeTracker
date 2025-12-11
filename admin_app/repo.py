@@ -301,13 +301,19 @@ class AdminRepo:
                 # Преобразуем UTC timestamp в локальное время для правильного сравнения с выбранной датой
                 if date_from or date_to:
                     filtered_by_date = []
-                    # Получаем локальный часовой пояс (предполагаем UTC+3 для России/Москвы)
-                    # Можно улучшить, используя системный часовой пояс
+                    # Получаем локальный часовой пояс
                     try:
-                        import time
-                        local_offset = time.timezone if (time.daylight == 0) else time.altzone
-                        local_offset_hours = -local_offset / 3600  # В часах
-                    except:
+                        from datetime import timezone as tz
+                        # Используем системный локальный timezone
+                        local_tz = datetime.now().astimezone().tzinfo
+                        # Вычисляем offset в часах
+                        test_dt = datetime.now(tz.utc)
+                        local_dt = test_dt.astimezone(local_tz)
+                        offset = local_dt.utcoffset()
+                        local_offset_hours = offset.total_seconds() / 3600
+                        logger.debug(f"Detected local timezone offset: UTC+{local_offset_hours} hours")
+                    except Exception as e:
+                        logger.warning(f"Failed to detect timezone: {e}, using UTC+3 as default")
                         local_offset_hours = 3  # По умолчанию UTC+3 для Москвы
                     
                     for r in data:
@@ -335,18 +341,29 @@ class AdminRepo:
                             dt_local = dt_utc + timedelta(hours=local_offset_hours)
                             entry_date = dt_local.date()
                             
+                            # Логируем первые несколько записей для диагностики
+                            if len(filtered_by_date) < 3:
+                                logger.debug(f"Date filtering: UTC={dt_utc.date()} {dt_utc.strftime('%H:%M:%S')} -> "
+                                           f"Local={entry_date} {dt_local.strftime('%H:%M:%S')} (offset={local_offset_hours}h)")
+                            
                             # Проверяем соответствие фильтрам (используем локальную дату)
+                            include = True
                             if date_from:
                                 filter_from = datetime.strptime(date_from, '%Y-%m-%d').date()
                                 if entry_date < filter_from:
-                                    continue
+                                    include = False
+                                    if len(filtered_by_date) < 3:
+                                        logger.debug(f"  Excluded: entry_date {entry_date} < filter_from {filter_from}")
                             
-                            if date_to:
+                            if include and date_to:
                                 filter_to = datetime.strptime(date_to, '%Y-%m-%d').date()
                                 if entry_date > filter_to:
-                                    continue
+                                    include = False
+                                    if len(filtered_by_date) < 3:
+                                        logger.debug(f"  Excluded: entry_date {entry_date} > filter_to {filter_to}")
                             
-                            filtered_by_date.append(r)
+                            if include:
+                                filtered_by_date.append(r)
                         except Exception as e:
                             logger.warning(f"Failed to parse timestamp '{timestamp_str}' for date filtering: {e}")
                             # Включаем запись, если не удалось распарсить (на случай проблем с форматом)
