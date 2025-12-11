@@ -64,6 +64,8 @@ try:
         if work_log_extended:
             # Анализируем даты
             dates_extended = defaultdict(int)
+            timestamps_by_date = defaultdict(list)
+            
             for entry in work_log_extended:
                 timestamp_str = entry.get('timestamp', '')
                 if timestamp_str:
@@ -74,36 +76,67 @@ try:
                             dt = datetime.strptime(timestamp_str[:19], '%Y-%m-%d %H:%M:%S')
                         entry_date = dt.date()
                         dates_extended[entry_date.isoformat()] += 1
-                    except:
-                        pass
+                        timestamps_by_date[entry_date.isoformat()].append({
+                            'timestamp': timestamp_str,
+                            'dt': dt,
+                            'entry': entry
+                        })
+                    except Exception as e:
+                        print(f"     ⚠️ Ошибка парсинга '{timestamp_str}': {e}")
             
             print(f"   Распределение по датам:")
             for d, count in sorted(dates_extended.items()):
                 marker = " <-- ТЕСТОВАЯ ДАТА" if d == date_str else ""
                 print(f"     {d}: {count} записей{marker}")
             
-            # Показываем примеры записей за 12.12
-            print(f"\n   Примеры записей за {date_str}:")
-            count_12_12 = 0
-            for entry in work_log_extended[:20]:
+            # Показываем примеры timestamp за каждую дату
+            print(f"\n   Примеры timestamp по датам:")
+            for d in sorted(timestamps_by_date.keys()):
+                print(f"     {d}:")
+                for ts_info in timestamps_by_date[d][:3]:
+                    ts_str = ts_info['timestamp']
+                    dt_obj = ts_info['dt']
+                    entry = ts_info['entry']
+                    email = entry.get('email', 'N/A')
+                    status = entry.get('status', 'N/A')
+                    # Показываем UTC и локальное время
+                    utc_str = dt_obj.strftime('%Y-%m-%d %H:%M:%S UTC')
+                    # Предполагаем UTC+3 для Москвы
+                    local_dt = dt_obj.replace(tzinfo=None)  # Убираем timezone для сравнения
+                    print(f"       {ts_str[:25]} -> UTC: {utc_str} | {email} | {status}")
+            
+            # Проверяем, есть ли записи, которые должны попасть в 12.12
+            print(f"\n   Проверка записей, которые могут попасть в {date_str} из-за часовых поясов:")
+            found_potential = False
+            for entry in work_log_extended:
                 timestamp_str = entry.get('timestamp', '')
                 if timestamp_str:
                     try:
                         if 'T' in timestamp_str:
-                            dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                            dt_utc = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
                         else:
-                            dt = datetime.strptime(timestamp_str[:19], '%Y-%m-%d %H:%M:%S')
-                        entry_date = dt.date()
-                        if entry_date.isoformat() == date_str:
-                            count_12_12 += 1
+                            dt_utc = datetime.strptime(timestamp_str[:19], '%Y-%m-%d %H:%M:%S')
+                        
+                        # Проверяем, попадает ли UTC дата в диапазон 12.12
+                        utc_date = dt_utc.date()
+                        
+                        # Также проверяем локальное время (UTC+3 для Москвы)
+                        dt_local = dt_utc.replace(tzinfo=None) + timedelta(hours=3)
+                        local_date = dt_local.date()
+                        
+                        if utc_date.isoformat() == date_str or local_date.isoformat() == date_str:
+                            if not found_potential:
+                                print(f"     Найдены записи, которые могут относиться к {date_str}:")
+                                found_potential = True
                             email = entry.get('email', 'N/A')
                             status = entry.get('status', 'N/A')
-                            action_type = entry.get('action_type', 'N/A')
-                            print(f"     {timestamp_str[:19]} | {email} | {action_type} | {status}")
-                            if count_12_12 >= 5:
-                                break
-                    except:
+                            print(f"       UTC: {utc_date} {dt_utc.strftime('%H:%M:%S')} | Локальное (UTC+3): {local_date} {dt_local.strftime('%H:%M:%S')} | {email} | {status}")
+                    except Exception as e:
                         pass
+            
+            if not found_potential:
+                print(f"     Записей, которые могут относиться к {date_str}, не найдено")
+                print(f"     Возможно, данные за {date_str} еще не были созданы на момент теста")
     
     if work_log_data:
         print(f"\n2.2. Анализ полученных данных:")
