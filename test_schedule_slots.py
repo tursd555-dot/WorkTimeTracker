@@ -163,6 +163,23 @@ def test_schedule_slots():
                               f"Длительность={slot.get('duration')}, Окно={slot.get('window_start')}-{slot.get('window_end')}")
                 else:
                     print(f"      ⚠️  Слоты не загружены!")
+                
+                # Дополнительная диагностика: проверяем сырые данные из таблицы
+                print(f"\n   📋 Диагностика: проверяем сырые данные из таблицы...")
+                ws = break_mgr.sheets.get_worksheet(break_mgr.SCHEDULES_SHEET)
+                raw_rows = break_mgr.sheets._read_table(ws)
+                template_rows = [r for r in raw_rows if r.get('Name') == test_name]
+                print(f"      Найдено записей с именем '{test_name}': {len(template_rows)}")
+                for idx, row in enumerate(template_rows[:4], 1):  # Показываем первые 4
+                    print(f"      Запись {idx}:")
+                    print(f"         ScheduleID: {row.get('ScheduleID')}")
+                    print(f"         Name: {row.get('Name')}")
+                    print(f"         Description: {row.get('Description')}")
+                    print(f"         SlotType: {row.get('SlotType')}")
+                    print(f"         Duration: {row.get('Duration')}")
+                    print(f"         WindowStart: {row.get('WindowStart')}")
+                    print(f"         WindowEnd: {row.get('WindowEnd')}")
+                    print(f"         Order: {row.get('Order')}")
                 print()
             else:
                 print(f"   ⚠️  Шаблон не найден через list_schedules")
