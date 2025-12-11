@@ -23,6 +23,7 @@ from PyQt5.QtCore import Qt, QDate, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QColor
 from datetime import datetime, timedelta, date
 from typing import List, Dict, Optional
+from collections import defaultdict
 import logging
 import json
 
@@ -530,13 +531,24 @@ class ReportsTab(QWidget):
                 if email:
                     violations_by_email[email] = violations_by_email.get(email, 0) + 1
             
+            # Если есть фильтр по пользователю, показываем только его
+            if email_filter:
+                employees_data = {k: v for k, v in employees_data.items() if k == email_filter}
+            
+            # Сортируем по общему времени (убывание)
+            sorted_employees = sorted(
+                employees_data.items(),
+                key=lambda x: x[1]['total_seconds'],
+                reverse=True
+            )
+            
             # Заполняем таблицу
-            self.employees_table.setRowCount(len(employees_data))
+            self.employees_table.setRowCount(len(sorted_employees))
             total_time = 0
             total_productive = 0
             total_sessions = 0
             
-            for row, (email, data) in enumerate(sorted(employees_data.items())):
+            for row, (email, data) in enumerate(sorted_employees):
                 total_hours = data['total_seconds'] // 3600
                 total_mins = (data['total_seconds'] % 3600) // 60
                 total_time_str = f"{total_hours}:{total_mins:02d}"
@@ -606,8 +618,15 @@ class ReportsTab(QWidget):
             users = self.repo.list_users()
             users_dict = {u.get("Email", "").lower(): u for u in users}
             
+            # Группируем логи по email, затем по группам
+            logs_by_email = defaultdict(list)
             for log_entry in work_log_data:
                 email = log_entry.get('email', '').lower()
+                if email:
+                    logs_by_email[email].append(log_entry)
+            
+            # Обрабатываем каждого сотрудника
+            for email, logs in logs_by_email.items():
                 user = users_dict.get(email, {})
                 group = user.get('Group', 'Без группы')
                 
@@ -621,15 +640,12 @@ class ReportsTab(QWidget):
                     }
                 
                 groups_data[group]['employees'].add(email)
-                session_id = log_entry.get('session_id', '')
-                if session_id:
-                    groups_data[group]['sessions'].add(session_id)
                 
-                status = log_entry.get('status', '')
-                if status:
-                    groups_data[group]['total_seconds'] += 60
-                    if status in ['В работе', 'На задаче']:
-                        groups_data[group]['productive_seconds'] += 60
+                # Вычисляем время из логов
+                time_data = self._calculate_time_from_logs(logs)
+                groups_data[group]['total_seconds'] += time_data['total_seconds']
+                groups_data[group]['productive_seconds'] += time_data['productive_seconds']
+                groups_data[group]['sessions'].update(time_data['sessions'])
             
             # Подсчитываем нарушения по группам
             violations_by_group = {}
@@ -695,35 +711,49 @@ class ReportsTab(QWidget):
     def _update_statuses_report(self, date_from: str, date_to: str, user_filter: str, group_filter: str):
         """Обновляет отчет по типам статусов"""
         try:
+            # Извлекаем email из фильтра
+            email_filter = None
+            if user_filter and user_filter != "Все сотрудники":
+                if '(' in user_filter and ')' in user_filter:
+                    email_filter = user_filter.split('(')[-1].rstrip(')').lower().strip()
+                else:
+                    email_filter = user_filter.lower().strip()
+            
             # Получаем данные из work_log
             work_log_data = self.repo.get_work_log_data(
                 date_from=date_from,
                 date_to=date_to,
-                email=user_filter if user_filter and user_filter != "Все сотрудники" else None,
+                email=email_filter,
                 group=group_filter if group_filter and group_filter != "Все группы" else None
             )
             
-            # Группируем по статусам
+            # Группируем логи по email для правильного расчета времени
+            logs_by_email = defaultdict(list)
+            for log_entry in work_log_data:
+                email = log_entry.get('email', '').lower()
+                if email:
+                    logs_by_email[email].append(log_entry)
+            
+            # Группируем по статусам и считаем реальное время
             statuses_data = {}
             total_seconds = 0
             
-            for log_entry in work_log_data:
-                status = log_entry.get('status', '')
-                if not status:
-                    continue
+            for email, logs in logs_by_email.items():
+                time_data = self._calculate_time_from_logs(logs)
                 
-                if status not in statuses_data:
-                    statuses_data[status] = {
-                        'status': status,
-                        'seconds': 0,
-                        'transitions': 0,
-                        'employees': set()
-                    }
-                
-                statuses_data[status]['seconds'] += 60  # Предполагаем 1 минута на запись
-                statuses_data[status]['transitions'] += 1
-                statuses_data[status]['employees'].add(log_entry.get('email', ''))
-                total_seconds += 60
+                for status, seconds in time_data['statuses'].items():
+                    if status not in statuses_data:
+                        statuses_data[status] = {
+                            'status': status,
+                            'seconds': 0,
+                            'transitions': 0,
+                            'employees': set()
+                        }
+                    
+                    statuses_data[status]['seconds'] += seconds
+                    statuses_data[status]['transitions'] += 1
+                    statuses_data[status]['employees'].add(email)
+                    total_seconds += seconds
             
             # Заполняем таблицу
             self.statuses_table.setRowCount(len(statuses_data))
@@ -755,30 +785,38 @@ class ReportsTab(QWidget):
     def _update_productivity_report(self, date_from: str, date_to: str, user_filter: str, group_filter: str):
         """Обновляет отчет по продуктивным статусам"""
         try:
+            # Извлекаем email из фильтра
+            email_filter = None
+            if user_filter and user_filter != "Все сотрудники":
+                if '(' in user_filter and ')' in user_filter:
+                    email_filter = user_filter.split('(')[-1].rstrip(')').lower().strip()
+                else:
+                    email_filter = user_filter.lower().strip()
+            
             # Получаем данные из work_log
             work_log_data = self.repo.get_work_log_data(
                 date_from=date_from,
                 date_to=date_to,
-                email=user_filter if user_filter and user_filter != "Все сотрудники" else None,
+                email=email_filter,
                 group=group_filter if group_filter and group_filter != "Все группы" else None
             )
             
-            # Группируем по сотрудникам, считаем только продуктивные статусы
+            # Группируем по сотрудникам
             employees_data = {}
             users = self.repo.list_users()
             users_dict = {u.get("Email", "").lower(): u for u in users}
             
-            productive_statuses = ['В работе', 'На задаче']
+            # Группируем логи по email
+            logs_by_email = defaultdict(list)
+            for log_entry in work_log_data:
+                email = log_entry.get('email', '').lower()
+                if email:
+                    logs_by_email[email].append(log_entry)
+            
             total_seconds = 0
             productive_seconds = 0
             
-            for log_entry in work_log_data:
-                email = log_entry.get('email', '').lower()
-                status = log_entry.get('status', '')
-                
-                if not email or not status:
-                    continue
-                
+            for email, logs in logs_by_email.items():
                 if email not in employees_data:
                     user = users_dict.get(email, {})
                     employees_data[email] = {
@@ -790,16 +828,14 @@ class ReportsTab(QWidget):
                         'sessions': set()
                     }
                 
-                session_id = log_entry.get('session_id', '')
-                if session_id:
-                    employees_data[email]['sessions'].add(session_id)
+                # Вычисляем время из логов
+                time_data = self._calculate_time_from_logs(logs)
+                employees_data[email]['total_seconds'] = time_data['total_seconds']
+                employees_data[email]['productive_seconds'] = time_data['productive_seconds']
+                employees_data[email]['sessions'] = time_data['sessions']
                 
-                employees_data[email]['total_seconds'] += 60
-                total_seconds += 60
-                
-                if status in productive_statuses:
-                    employees_data[email]['productive_seconds'] += 60
-                    productive_seconds += 60
+                total_seconds += time_data['total_seconds']
+                productive_seconds += time_data['productive_seconds']
             
             # Сортируем по продуктивному времени
             sorted_employees = sorted(

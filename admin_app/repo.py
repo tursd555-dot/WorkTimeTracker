@@ -269,7 +269,10 @@ class AdminRepo:
                 
                 # Фильтр по email
                 if email:
-                    query = query.eq('email', email.lower())
+                    # Если email содержит имя в скобках, извлекаем только email
+                    if '(' in email and ')' in email:
+                        email = email.split('(')[-1].rstrip(')')
+                    query = query.eq('email', email.lower().strip())
                 
                 response = query.execute()
                 data = response.data or []
@@ -280,7 +283,17 @@ class AdminRepo:
                     group_emails = {u.get("Email", "").lower() for u in users if u.get("Group", "") == group}
                     data = [r for r in data if r.get('email', '').lower() in group_emails]
                 
-                return data
+                # Фильтруем только записи со статусами (исключаем тестовые данные без статусов)
+                # И записи с action_type STATUS_CHANGE или LOGIN
+                filtered_data = []
+                for r in data:
+                    status = r.get('status')
+                    action_type = r.get('action_type', '')
+                    # Включаем записи со статусом или важные action_type
+                    if status or action_type in ['STATUS_CHANGE', 'LOGIN', 'LOGOUT']:
+                        filtered_data.append(r)
+                
+                return filtered_data
             else:
                 # Для Google Sheets - используем старый метод
                 # TODO: Реализовать для Google Sheets
