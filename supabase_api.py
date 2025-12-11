@@ -417,7 +417,7 @@ class SupabaseAPI:
             data = {
                 'logout_time': logout_time,
                 'logout_type': 'force',
-                'status': 'completed'
+                'status': 'kicked'  # gui.py проверяет 'kicked' или 'finished'
             }
 
             self.client.table('work_sessions')\
