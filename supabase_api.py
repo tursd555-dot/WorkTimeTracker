@@ -256,23 +256,32 @@ class SupabaseAPI:
                     try:
                         logger.info(f"[ASSIGNMENT] Looking for schedule: {schedule_id_or_name}")
                         
-                        # Пробуем найти шаблон по id (если это уже UUID)
-                        try:
-                            response = self.client.table('break_schedules')\
-                                .select('id, name')\
-                                .eq('id', schedule_id_or_name)\
-                                .execute()
-                            if response.data:
-                                schedule_uuid = response.data[0]['id']
-                                schedule_name = response.data[0].get('name', schedule_id_or_name)
-                                logger.info(f"[ASSIGNMENT] ✅ Found schedule by UUID: {schedule_uuid} (name: {schedule_name})")
-                        except Exception as uuid_error:
-                            logger.debug(f"[ASSIGNMENT] Not a UUID or UUID lookup failed: {uuid_error}")
-                            pass
+                        # Проверяем, является ли это валидным UUID (формат: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+                        import re
+                        uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+                        is_uuid = uuid_pattern.match(schedule_id_or_name.strip())
                         
-                        # Если не нашли по UUID, пробуем найти по имени
-                        if not schedule_uuid:
-                            logger.info(f"[ASSIGNMENT] Trying to find schedule by name: {schedule_id_or_name}")
+                        if is_uuid:
+                            # Это уже UUID, проверяем что шаблон существует
+                            logger.info(f"[ASSIGNMENT] schedule_id_or_name is a UUID, validating: {schedule_id_or_name}")
+                            try:
+                                response = self.client.table('break_schedules')\
+                                    .select('id, name')\
+                                    .eq('id', schedule_id_or_name)\
+                                    .execute()
+                                if response.data:
+                                    schedule_uuid = response.data[0]['id']
+                                    schedule_name = response.data[0].get('name', schedule_id_or_name)
+                                    logger.info(f"[ASSIGNMENT] ✅ Schedule UUID validated: {schedule_uuid} (name: {schedule_name})")
+                                else:
+                                    logger.error(f"[ASSIGNMENT] ❌ Schedule UUID not found in database: {schedule_id_or_name}")
+                                    return False
+                            except Exception as uuid_error:
+                                logger.error(f"[ASSIGNMENT] ❌ Failed to validate UUID: {uuid_error}", exc_info=True)
+                                return False
+                        else:
+                            # Это не UUID, ищем по имени
+                            logger.info(f"[ASSIGNMENT] schedule_id_or_name is not a UUID, searching by name: {schedule_id_or_name}")
                             response = self.client.table('break_schedules')\
                                 .select('id, name')\
                                 .eq('name', schedule_id_or_name)\
@@ -283,18 +292,19 @@ class SupabaseAPI:
                                 logger.info(f"[ASSIGNMENT] ✅ Found schedule by name '{schedule_id_or_name}': UUID={schedule_uuid}")
                             else:
                                 logger.warning(f"[ASSIGNMENT] ⚠️ Schedule not found by name: {schedule_id_or_name}")
+                                # Пробуем найти все шаблоны для отладки
+                                try:
+                                    all_schedules = self.client.table('break_schedules')\
+                                        .select('id, name')\
+                                        .limit(10)\
+                                        .execute()
+                                    logger.info(f"[ASSIGNMENT] Available schedules: {[(s.get('name'), s.get('id')) for s in all_schedules.data]}")
+                                except Exception:
+                                    pass
+                                return False
                         
                         if not schedule_uuid:
                             logger.error(f"[ASSIGNMENT] ❌ Schedule not found: {schedule_id_or_name}")
-                            # Пробуем найти все шаблоны для отладки
-                            try:
-                                all_schedules = self.client.table('break_schedules')\
-                                    .select('id, name')\
-                                    .limit(10)\
-                                    .execute()
-                                logger.info(f"[ASSIGNMENT] Available schedules: {[(s.get('name'), s.get('id')) for s in all_schedules.data]}")
-                            except Exception:
-                                pass
                             return False
                     except Exception as e:
                         logger.error(f"[ASSIGNMENT] ❌ Failed to find schedule UUID: {e}", exc_info=True)
