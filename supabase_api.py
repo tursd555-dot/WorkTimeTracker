@@ -264,6 +264,17 @@ class SupabaseAPI:
                             # Если description не JSON или не содержит данных слота, это основная запись шаблона
                             logger.debug(f"Could not parse slot info from description '{description_value}': {e}")
                 
+                # Специальная обработка для break_violations: нормализуем timestamp
+                if table_name == "break_violations":
+                    timestamp = formatted_row.get('Timestamp') or row.get('timestamp')
+                    if timestamp:
+                        # Если timestamp в формате ISO (2025-12-11T14:30:00+00:00), преобразуем в читаемый формат
+                        if 'T' in str(timestamp):
+                            # ISO формат: оставляем как есть для фильтрации, но можно нормализовать
+                            formatted_row['Timestamp'] = str(timestamp)
+                        else:
+                            formatted_row['Timestamp'] = str(timestamp)
+                
                 rows.append(formatted_row)
                 logger.debug(f"Formatted row: {formatted_row}")
             

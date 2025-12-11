@@ -1209,7 +1209,11 @@ class BreakManager:
             if date_from:
                 # Для дат без времени сравниваем первые 10 символов
                 if len(date_from) == 10:  # Формат YYYY-MM-DD
-                    filtered = [r for r in filtered if r.get("Timestamp", "")[:10] >= date_from]
+                    # Timestamp может быть в формате ISO (2025-12-11T14:30:00+00:00) или строкой (2025-12-11 14:30:00)
+                    filtered = [r for r in filtered 
+                               if r.get("Timestamp", "") and 
+                               (r.get("Timestamp", "")[:10] >= date_from or 
+                                r.get("Timestamp", "").replace("T", " ")[:10] >= date_from)]
                 else:
                     filtered = [r for r in filtered if r.get("Timestamp", "") >= date_from]
             
@@ -1217,7 +1221,11 @@ class BreakManager:
                 # Для date_to используем <= только если указано время
                 if len(date_to) == 10:  # Формат YYYY-MM-DD
                     # Включаем весь день - сравниваем первые 10 символов
-                    filtered = [r for r in filtered if r.get("Timestamp", "")[:10] <= date_to]
+                    # Timestamp может быть в формате ISO (2025-12-11T14:30:00+00:00) или строкой (2025-12-11 14:30:00)
+                    filtered = [r for r in filtered 
+                               if r.get("Timestamp", "") and 
+                               (r.get("Timestamp", "")[:10] <= date_to or 
+                                r.get("Timestamp", "").replace("T", " ")[:10] <= date_to)]
                 else:
                     filtered = [r for r in filtered if r.get("Timestamp", "") <= date_to]
             
