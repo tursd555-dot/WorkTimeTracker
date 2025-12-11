@@ -476,29 +476,33 @@ class SupabaseAPI:
                 
                 # Пробуем разные варианты названий полей для связи
                 deleted = False
-                for schedule_field in ['schedule_id', 'break_schedule_id', 'break_schedules_id', 'schedule_name', 'schedule', 'schedule_name_id']:
+                for schedule_field in ['schedule_id', 'break_schedule_id', 'break_schedules_id']:
                     try:
-                        # Пробуем удалить по UUID
-                        if schedule_field in ['schedule_id', 'break_schedule_id', 'break_schedules_id']:
-                            response = self.client.table(assignments_table)\
-                                .delete()\
-                                .eq(schedule_field, schedule_db_id)\
-                                .execute()
-                            if response.data:
-                                logger.info(f"[DELETE_ASSIGNMENTS] ✅ Deleted {len(response.data)} assignments from {assignments_table} by {schedule_field}={schedule_db_id}")
-                                deleted = True
-                        
-                        # Также пробуем удалить по имени/ID шаблона (если поле содержит строку)
-                        if schedule_field in ['schedule_name', 'schedule_id', 'schedule', 'schedule_name_id']:
-                            response = self.client.table(assignments_table)\
-                                .delete()\
-                                .eq(schedule_field, schedule_id_or_name)\
-                                .execute()
-                            if response.data:
-                                logger.info(f"[DELETE_ASSIGNMENTS] ✅ Deleted {len(response.data)} assignments from {assignments_table} by {schedule_field}={schedule_id_or_name}")
-                                deleted = True
+                        # Пробуем удалить по UUID (если schedule_db_id это UUID)
+                        response = self.client.table(assignments_table)\
+                            .delete()\
+                            .eq(schedule_field, schedule_db_id)\
+                            .execute()
+                        if response.data:
+                            logger.info(f"[DELETE_ASSIGNMENTS] ✅ Deleted {len(response.data)} assignments from {assignments_table} by {schedule_field}={schedule_db_id}")
+                            deleted = True
                     except Exception as field_error:
-                        logger.debug(f"[DELETE_ASSIGNMENTS] Failed with field {schedule_field} from {assignments_table}: {field_error}")
+                        logger.debug(f"[DELETE_ASSIGNMENTS] Failed with field {schedule_field} (UUID) from {assignments_table}: {field_error}")
+                        pass
+                
+                # Также пробуем удалить по имени/ID шаблона (строка, не UUID)
+                # Это важно, так как в назначениях может храниться имя шаблона, а не UUID
+                for schedule_field in ['schedule_id', 'schedule_name', 'schedule']:
+                    try:
+                        response = self.client.table(assignments_table)\
+                            .delete()\
+                            .eq(schedule_field, schedule_id_or_name)\
+                            .execute()
+                        if response.data:
+                            logger.info(f"[DELETE_ASSIGNMENTS] ✅ Deleted {len(response.data)} assignments from {assignments_table} by {schedule_field}={schedule_id_or_name}")
+                            deleted = True
+                    except Exception as field_error:
+                        logger.debug(f"[DELETE_ASSIGNMENTS] Failed with field {schedule_field} (string) from {assignments_table}: {field_error}")
                         continue
                 
                 if deleted:
