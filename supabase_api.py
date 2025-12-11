@@ -430,33 +430,56 @@ class SupabaseAPI:
             schedule_id_or_name: ID или имя шаблона (для поиска в назначениях)
         """
         try:
+            logger.info(f"[DELETE_ASSIGNMENTS] Deleting assignments for schedule_db_id={schedule_db_id}, schedule_id_or_name={schedule_id_or_name}")
+            
             # Пробуем удалить назначения из таблицы user_break_assignments
             for assignments_table in ['user_break_assignments', 'break_assignments', 'user_break_schedules']:
+                logger.debug(f"[DELETE_ASSIGNMENTS] Trying table: {assignments_table}")
+                
+                # Сначала проверяем, какие записи есть в таблице
+                try:
+                    response = self.client.table(assignments_table).select('*').limit(10).execute()
+                    logger.info(f"[DELETE_ASSIGNMENTS] Found {len(response.data)} records in {assignments_table}")
+                    if response.data:
+                        logger.info(f"[DELETE_ASSIGNMENTS] Sample record keys: {list(response.data[0].keys())}")
+                except Exception as check_error:
+                    logger.debug(f"[DELETE_ASSIGNMENTS] Could not read {assignments_table}: {check_error}")
+                    continue
+                
                 # Пробуем разные варианты названий полей для связи
-                for schedule_field in ['schedule_id', 'break_schedule_id', 'break_schedules_id', 'schedule_name']:
+                deleted = False
+                for schedule_field in ['schedule_id', 'break_schedule_id', 'break_schedules_id', 'schedule_name', 'schedule', 'schedule_name_id']:
                     try:
                         # Пробуем удалить по UUID
                         if schedule_field in ['schedule_id', 'break_schedule_id', 'break_schedules_id']:
-                            self.client.table(assignments_table)\
+                            response = self.client.table(assignments_table)\
                                 .delete()\
                                 .eq(schedule_field, schedule_db_id)\
                                 .execute()
-                            logger.info(f"Deleted assignments from {assignments_table} by {schedule_field}={schedule_db_id}")
+                            if response.data:
+                                logger.info(f"[DELETE_ASSIGNMENTS] ✅ Deleted {len(response.data)} assignments from {assignments_table} by {schedule_field}={schedule_db_id}")
+                                deleted = True
                         
-                        # Также пробуем удалить по имени/ID шаблона (если поле schedule_name или schedule_id содержит строку)
-                        if schedule_field == 'schedule_name' or schedule_field == 'schedule_id':
-                            self.client.table(assignments_table)\
+                        # Также пробуем удалить по имени/ID шаблона (если поле содержит строку)
+                        if schedule_field in ['schedule_name', 'schedule_id', 'schedule', 'schedule_name_id']:
+                            response = self.client.table(assignments_table)\
                                 .delete()\
                                 .eq(schedule_field, schedule_id_or_name)\
                                 .execute()
-                            logger.info(f"Deleted assignments from {assignments_table} by {schedule_field}={schedule_id_or_name}")
-                        
-                        return
+                            if response.data:
+                                logger.info(f"[DELETE_ASSIGNMENTS] ✅ Deleted {len(response.data)} assignments from {assignments_table} by {schedule_field}={schedule_id_or_name}")
+                                deleted = True
                     except Exception as field_error:
-                        logger.debug(f"Failed to delete assignments with field {schedule_field} from {assignments_table}: {field_error}")
+                        logger.debug(f"[DELETE_ASSIGNMENTS] Failed with field {schedule_field} from {assignments_table}: {field_error}")
                         continue
+                
+                if deleted:
+                    logger.info(f"[DELETE_ASSIGNMENTS] Successfully deleted assignments from {assignments_table}")
+                    return
+                
+            logger.warning(f"[DELETE_ASSIGNMENTS] ⚠️ Could not delete any assignments for schedule {schedule_id_or_name}")
         except Exception as e:
-            logger.debug(f"Could not delete schedule assignments: {e}")
+            logger.error(f"[DELETE_ASSIGNMENTS] ❌ Error deleting schedule assignments: {e}", exc_info=True)
     
     # ========================================================================
     # USERS
