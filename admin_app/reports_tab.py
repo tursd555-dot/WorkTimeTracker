@@ -22,7 +22,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QDate, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QColor
 from datetime import datetime, timedelta, date
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from collections import defaultdict
 import logging
 import json
@@ -408,7 +408,7 @@ class ReportsTab(QWidget):
         card.setMinimumHeight(80)
         return card
     
-    def _calculate_time_from_logs(self, logs: List[Dict]) -> Dict[str, any]:
+    def _calculate_time_from_logs(self, logs: List[Dict]) -> Dict[str, Any]:
         """
         Вычисляет время работы из логов статусов.
         
