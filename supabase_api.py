@@ -100,6 +100,7 @@ class SupabaseAPI:
             "BreakSchedules": "break_schedules",
             "UserBreakAssignments": "user_break_assignments",
             "BreakUsageLog": "break_usage_log",
+            "BreakLog": "break_log",  # v20.3: renamed from BreakUsageLog
             "BreakViolations": "break_violations",
         }
         

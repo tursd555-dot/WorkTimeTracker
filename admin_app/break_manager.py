@@ -26,6 +26,34 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 
+def parse_time(time_str: str, default: str = "09:00") -> time:
+    """
+    Парсит строку времени, поддерживая форматы HH:MM и HH:MM:SS
+    
+    Args:
+        time_str: Строка времени (например, "09:00" или "09:00:00")
+        default: Значение по умолчанию, если парсинг не удался
+    
+    Returns:
+        time объект
+    """
+    if not time_str:
+        time_str = default
+    
+    # Пробуем разные форматы
+    for fmt in ["%H:%M:%S", "%H:%M"]:
+        try:
+            return datetime.strptime(time_str, fmt).time()
+        except ValueError:
+            continue
+    
+    # Если ничего не подошло, используем значение по умолчанию
+    try:
+        return datetime.strptime(default, "%H:%M").time()
+    except:
+        return time(9, 0)  # Fallback
+
+
 @dataclass
 class BreakLimit:
     """Лимит на перерывы/обеды"""
@@ -184,7 +212,7 @@ class BreakManager:
             return False
     
     def get_schedule(self, schedule_id: str) -> Optional[BreakSchedule]:
-        """Получает шаблон графика по ID"""
+        """Получает шаблон графика по ID или имени"""
         # Проверяем кэш
         if schedule_id in self._cache:
             return self._cache[schedule_id]
@@ -194,7 +222,13 @@ class BreakManager:
             rows = self.sheets._read_table(ws)
             
             # Фильтруем строки для данного графика
-            schedule_rows = [r for r in rows if r.get("ScheduleID") == schedule_id]
+            # Пробуем найти по ScheduleID (UUID) или по Name (имя шаблона)
+            schedule_rows = [
+                r for r in rows 
+                if (r.get("ScheduleID") == schedule_id or 
+                    r.get("Name") == schedule_id or
+                    r.get("ScheduleUUID") == schedule_id)  # Также проверяем ScheduleUUID если есть
+            ]
             if not schedule_rows:
                 return None
             
@@ -215,23 +249,24 @@ class BreakManager:
             windows = []
             for row in schedule_rows:
                 try:
-                    window_start = datetime.strptime(row.get("WindowStart", "09:00"), "%H:%M").time()
-                    window_end = datetime.strptime(row.get("WindowEnd", "17:00"), "%H:%M").time()
+                    window_start = parse_time(row.get("WindowStart", "09:00"), "09:00")
+                    window_end = parse_time(row.get("WindowEnd", "17:00"), "17:00")
                     windows.append(BreakWindow(
                         break_type=row.get("SlotType", ""),
                         start_time=window_start,
                         end_time=window_end,
                         priority=int(row.get("Order", "1"))
                     ))
-                except:
+                except Exception as e:
+                    logger.debug(f"Failed to parse window for row: {e}")
                     pass
             
             # Создаём объект графика
             schedule = BreakSchedule(
                 schedule_id=schedule_id,
                 name=first.get("Name", ""),
-                shift_start=datetime.strptime(first.get("ShiftStart", "09:00"), "%H:%M").time(),
-                shift_end=datetime.strptime(first.get("ShiftEnd", "17:00"), "%H:%M").time(),
+                shift_start=parse_time(first.get("ShiftStart", "09:00"), "09:00"),
+                shift_end=parse_time(first.get("ShiftEnd", "17:00"), "17:00"),
                 limits=list(limits_dict.values()),
                 windows=windows
             )
