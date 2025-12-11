@@ -431,27 +431,55 @@ class SupabaseAPI:
             session_id_str = str(session_id).strip()
             logout_time_str = logout_time or datetime.now(timezone.utc).isoformat()
             
-            # Обновляем только существующие поля (без updated_at)
+            # Обновляем только существующие поля
+            # Примечание: logout_reason может отсутствовать в таблице work_sessions
             update_data = {
                 'status': 'finished',
-                'logout_time': logout_time_str,
-                'logout_reason': reason
+                'logout_time': logout_time_str
             }
             
-            # Обновляем в work_sessions (active_sessions - это VIEW)
-            response = self.client.table('work_sessions')\
-                .update(update_data)\
-                .eq('email', email_lower)\
-                .eq('session_id', session_id_str)\
-                .eq('status', 'active')\
-                .execute()
+            # Пытаемся добавить logout_reason только если поле существует
+            # Если нет - просто обновим статус и logout_time
             
-            if response.data:
-                logger.info(f"Successfully finished session {session_id_str} for {email}")
-                return True
-            else:
-                logger.info(f"No active session found with session_id {session_id_str} for {email}")
-                return False
+            # Обновляем в work_sessions (active_sessions - это VIEW)
+            try:
+                response = self.client.table('work_sessions')\
+                    .update(update_data)\
+                    .eq('email', email_lower)\
+                    .eq('session_id', session_id_str)\
+                    .eq('status', 'active')\
+                    .execute()
+                
+                if response.data:
+                    logger.info(f"Successfully finished session {session_id_str} for {email}")
+                    return True
+                else:
+                    logger.info(f"No active session found with session_id {session_id_str} for {email}")
+                    return False
+            except Exception as update_error:
+                # Если ошибка из-за logout_reason - пробуем без него
+                error_msg = str(update_error)
+                if 'logout_reason' in error_msg.lower():
+                    logger.debug(f"Field 'logout_reason' not found, updating without it")
+                    update_data_minimal = {
+                        'status': 'finished',
+                        'logout_time': logout_time_str
+                    }
+                    response = self.client.table('work_sessions')\
+                        .update(update_data_minimal)\
+                        .eq('email', email_lower)\
+                        .eq('session_id', session_id_str)\
+                        .eq('status', 'active')\
+                        .execute()
+                    
+                    if response.data:
+                        logger.info(f"Successfully finished session {session_id_str} for {email} (without logout_reason)")
+                        return True
+                    else:
+                        logger.info(f"No active session found with session_id {session_id_str} for {email}")
+                        return False
+                else:
+                    raise
                 
         except Exception as e:
             logger.error(f"Failed to finish active session for {email}: {e}", exc_info=True)
