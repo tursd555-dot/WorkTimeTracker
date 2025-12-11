@@ -194,8 +194,29 @@ class SupabaseAPI:
             return []
     
     def get_all_active_sessions(self) -> List[Dict]:
-        """Получить все активные сессии (совместимость с sheets_api)"""
-        return self.get_active_sessions()
+        """
+        Получить все активные сессии (совместимость с sheets_api).
+        Преобразует данные в формат Google Sheets с ключами в верхнем регистре.
+        """
+        try:
+            sessions = self.get_active_sessions()
+            # Преобразуем в формат, совместимый с sheets_api
+            formatted_sessions = []
+            for session in sessions:
+                formatted_sessions.append({
+                    'Email': session.get('email', ''),
+                    'Name': session.get('name', ''),
+                    'SessionID': session.get('session_id', ''),
+                    'LoginTime': session.get('login_time', ''),
+                    'Status': session.get('status', ''),
+                    'LogoutTime': session.get('logout_time', ''),
+                    'LogoutReason': session.get('logout_reason', ''),
+                    'RemoteCommand': session.get('remote_command', '')
+                })
+            return formatted_sessions
+        except Exception as e:
+            logger.error(f"Failed to get all active sessions: {e}", exc_info=True)
+            return []
     
     def get_active_session(self, email: str) -> Optional[Dict[str, str]]:
         """
