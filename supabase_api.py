@@ -101,7 +101,7 @@ class SupabaseAPI:
             "UserBreakAssignments": "user_break_assignments",
             "BreakUsageLog": "break_usage_log",
             "BreakLog": "break_log",  # v20.3: renamed from BreakUsageLog
-            "BreakViolations": "break_violations",
+            "BreakViolations": "violations",  # В Supabase таблица называется violations
         }
         
         table_name = table_mapping.get(name, name.lower().replace(" ", "_"))
@@ -200,7 +200,7 @@ class SupabaseAPI:
                             'created_at': 'CreatedAt',
                             'updated_at': 'UpdatedAt',
                         }
-                    elif table_name == "break_violations":
+                    elif table_name == "violations" or table_name == "break_violations":
                         key_mapping = {
                             'id': 'Id',
                             'timestamp': 'Timestamp',
@@ -264,8 +264,8 @@ class SupabaseAPI:
                             # Если description не JSON или не содержит данных слота, это основная запись шаблона
                             logger.debug(f"Could not parse slot info from description '{description_value}': {e}")
                 
-                # Специальная обработка для break_violations: нормализуем timestamp
-                if table_name == "break_violations":
+                # Специальная обработка для violations: нормализуем timestamp
+                if table_name == "violations" or table_name == "break_violations":
                     timestamp = formatted_row.get('Timestamp') or row.get('timestamp')
                     if timestamp:
                         # Если timestamp в формате ISO (2025-12-11T14:30:00+00:00), преобразуем в читаемый формат
@@ -576,8 +576,9 @@ class SupabaseAPI:
                 else:
                     logger.error(f"Invalid values length: {len(values)}, expected at least 8")
                     return False
-            elif table_name == "break_violations":
+            elif table_name == "violations" or table_name == "break_violations":
                 # Формат: [timestamp, email, session_id, violation_type, details, status]
+                # В Supabase таблица называется "violations"
                 if len(values) >= 6:
                     timestamp = str(values[0]) if values[0] else None
                     email_val = str(values[1]).lower() if values[1] else None
@@ -612,7 +613,8 @@ class SupabaseAPI:
                     }
                     
                     try:
-                        response = self.client.table('break_violations').insert(violation_data).execute()
+                        # Используем правильное имя таблицы "violations"
+                        response = self.client.table('violations').insert(violation_data).execute()
                         if response.data:
                             logger.info(f"Created violation: email={email_val}, type={violation_type}")
                             return True
