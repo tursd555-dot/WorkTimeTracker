@@ -606,7 +606,33 @@ class BreakManager:
             # 2. Найти лимит для этого типа
             limit = next((l for l in schedule.limits if l.break_type == break_type), None)
             if not limit:
-                return False, f"В вашем графике нет {break_type.lower()}а"
+                # Если лимита нет в графике, используем дефолтные значения и разрешаем перерыв
+                # Но фиксируем нарушение - перерыв вне разрешенного времени
+                logger.warning(f"No limit found for {break_type} in schedule, using defaults and allowing break")
+                
+                # Дефолтные лимиты
+                from dataclasses import dataclass
+                @dataclass
+                class DefaultLimit:
+                    break_type: str
+                    time_minutes: int
+                    daily_count: int
+                
+                if break_type == "Перерыв":
+                    limit = DefaultLimit("Перерыв", 15, 3)
+                elif break_type == "Обед":
+                    limit = DefaultLimit("Обед", 60, 1)
+                else:
+                    limit = DefaultLimit(break_type, 15, 1)
+                
+                # Фиксируем нарушение - перерыв вне разрешенного времени
+                self._log_violation(
+                    email=email,
+                    session_id=session_id,
+                    violation_type=self.VIOLATION_OUT_OF_WINDOW,
+                    severity=self.SEVERITY_WARNING,
+                    details=f"{break_type} начат вне разрешенного времени (нет слота в графике)"
+                )
             
             # 3. Проверить дневной лимит
             today_count = self._count_breaks_today(email, break_type)
@@ -642,10 +668,15 @@ class BreakManager:
             current_time = now.time()
             in_window = False
             
-            for window in schedule.windows:
-                if window.break_type == break_type and window.is_within(current_time):
-                    in_window = True
-                    break
+            # Проверяем окна только если они есть в графике
+            if schedule.windows:
+                for window in schedule.windows:
+                    if window.break_type == break_type and window.is_within(current_time):
+                        in_window = True
+                        break
+            else:
+                # Если окон нет в графике, считаем что перерыв вне окна
+                in_window = False
             
             # 5. Логировать начало
             self._log_break_start(
@@ -657,13 +688,13 @@ class BreakManager:
                 in_window=in_window
             )
             
-            # 6. Если вне окна - мягкое нарушение (только логируем)
+            # 6. Если вне окна - фиксируем нарушение (WARNING уровень, т.к. это более серьезно)
             if not in_window:
                 self._log_violation(
                     email=email,
                     session_id=session_id,
                     violation_type=self.VIOLATION_OUT_OF_WINDOW,
-                    severity=self.SEVERITY_INFO,
+                    severity=self.SEVERITY_WARNING,  # Изменено с INFO на WARNING
                     details=f"{break_type} начат вне временного окна ({current_time.strftime('%H:%M')})"
                 )
             

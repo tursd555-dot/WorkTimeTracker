@@ -1438,7 +1438,8 @@ class SupabaseAPI:
             
             # Подготавливаем данные для вставки
             # ВАЖНО: Некоторые поля могут отсутствовать в таблице work_log в Supabase
-            # Проверяем только существующие поля: user_id, email, name, timestamp, action_type, status, session_id, user_group
+            # Проверяем только существующие поля: user_id, email, name, timestamp, action_type, status, session_id
+            # Поле user_group отсутствует в схеме work_log, поэтому не добавляем его
             records = []
             for action in actions:
                 record = {
@@ -1448,8 +1449,7 @@ class SupabaseAPI:
                     'timestamp': action.get('timestamp') or datetime.now(timezone.utc).isoformat(),
                     'action_type': action.get('action_type', ''),
                     'status': action.get('status', ''),
-                    'session_id': action.get('session_id', ''),
-                    'user_group': user_group or action.get('user_group')
+                    'session_id': action.get('session_id', '')
                 }
                 # Удаляем пустые значения
                 record = {k: v for k, v in record.items() if v is not None and v != ''}
