@@ -865,10 +865,15 @@ class BreakManager:
                 is_active_status = status == 'Active' or status == '' or status is None or not status
                 is_active = not has_end_time and is_active_status
                 
+                # Ищем активный перерыв за сегодня или вчера (если не завершен)
+                is_today = start_time_str.startswith(today)
+                yesterday = str(date.today().replace(day=date.today().day-1).isoformat())
+                is_yesterday = start_time_str.startswith(yesterday)
+                
                 if (row_email.lower() == email.lower() and
                     row_break_type == break_type and
                     is_active and
-                    start_time_str.startswith(today)):  # Только сегодня!
+                    (is_today or (is_yesterday and not has_end_time))):  # Сегодня или вчера (если не завершен)
                     return row
             
             return None
@@ -1236,7 +1241,7 @@ class BreakManager:
             
             today = date.today().isoformat()
             
-            # Ищем записи без EndTime за сегодня (или со статусом Active)
+            # Ищем записи без EndTime (активные перерывы могут быть за любую дату)
             active = []
             logger.debug(f"Checking for active breaks. Total rows: {len(rows)}, Today: {today}")
             
@@ -1250,14 +1255,19 @@ class BreakManager:
                 has_end_time = end_time is not None and str(end_time).strip() != ''
                 is_active_status = status == 'Active' or status == '' or status is None or not status
                 is_active = not has_end_time and is_active_status
+                
+                # Проверяем, что запись за сегодня или вчера (на случай если перерыв начался вчера и не завершен)
+                # Но приоритет отдаем записям за сегодня
                 is_today = start_time_str.startswith(today)
+                is_recent = start_time_str.startswith(today) or start_time_str.startswith(str(date.today().replace(day=date.today().day-1).isoformat()))
                 
                 logger.debug(f"Row check: email={row.get('Email') or row.get('email')}, "
                            f"start_time={start_time_str}, end_time={end_time}, status={status}, "
                            f"has_end_time={has_end_time}, is_active_status={is_active_status}, "
                            f"is_active={is_active}, is_today={is_today}")
                 
-                if (is_active and is_today):
+                # Включаем активные перерывы за сегодня ИЛИ за вчера (если не завершены)
+                if is_active and (is_today or (not is_today and not has_end_time)):
                     
                     email = row.get('Email') or row.get('email') or ''
                     break_type = row.get('BreakType') or row.get('break_type') or ''
