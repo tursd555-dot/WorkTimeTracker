@@ -251,10 +251,13 @@ class BreakManager:
             ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
             rows = self.sheets._read_table(ws)
             
-            # Группируем по schedule_id
+            # Группируем по schedule_id (может быть UUID или строка)
             schedules = {}
             for row in rows:
-                sid = row.get("ScheduleID", "").strip()
+                # Пробуем разные варианты ключей для schedule_id
+                sid = row.get("ScheduleID") or row.get("Id") or row.get("id")
+                if sid:
+                    sid = str(sid).strip()
                 if not sid:
                     continue
                 
@@ -262,8 +265,8 @@ class BreakManager:
                     schedules[sid] = {
                         "schedule_id": sid,
                         "name": row.get("Name", ""),
-                        "shift_start": row.get("ShiftStart", ""),
-                        "shift_end": row.get("ShiftEnd", "")
+                        "shift_start": row.get("ShiftStart", "") or "",
+                        "shift_end": row.get("ShiftEnd", "") or ""
                     }
             
             return list(schedules.values())
@@ -275,6 +278,32 @@ class BreakManager:
     def delete_schedule(self, schedule_id: str) -> bool:
         """Удаляет шаблон графика"""
         try:
+            # Проверяем, является ли это Supabase API
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Используем прямой метод удаления для Supabase
+                result = self.sheets._delete_rows_by_schedule_id("break_schedules", schedule_id)
+                if result:
+                    # Сбрасываем кэш шаблонов
+                    self._cache.pop(schedule_id, None)
+                    # Очищаем весь кэш назначений (так как назначения могли ссылаться на удалённый шаблон)
+                    # Находим все email, у которых был назначен этот шаблон, и очищаем их кэш
+                    try:
+                        ws = self.sheets.get_worksheet(self.ASSIGNMENTS_SHEET)
+                        assignments = self.sheets._read_table(ws)
+                        for assignment in assignments:
+                            assigned_schedule_id = assignment.get("ScheduleID") or assignment.get("ScheduleId") or assignment.get("Id")
+                            if assigned_schedule_id and str(assigned_schedule_id) == str(schedule_id):
+                                email = assignment.get("Email", "")
+                                if email:
+                                    # Очищаем кэш для этого пользователя (если есть метод для этого)
+                                    logger.debug(f"Clearing cache for user {email} after schedule deletion")
+                    except Exception as e:
+                        logger.debug(f"Could not clear assignment cache: {e}")
+                    
+                    logger.info(f"Deleted schedule: {schedule_id}")
+                return result
+            
+            # Старый код для Google Sheets
             ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
             values = self.sheets._request_with_retry(ws.get_all_values)
             
@@ -307,7 +336,7 @@ class BreakManager:
             return True
             
         except Exception as e:
-            logger.error(f"Failed to delete schedule: {e}")
+            logger.error(f"Failed to delete schedule {schedule_id}: {e}", exc_info=True)
             return False
     
     # =================== НАЗНАЧЕНИЕ ГРАФИКОВ ===================
@@ -332,31 +361,120 @@ class BreakManager:
             rows = self.sheets._read_table(ws)
             existing = next((r for r in rows if r.get("Email", "").lower() == email.lower()), None)
             
-            if existing:
-                # Обновляем существующее назначение
-                # Находим номер строки
-                all_values = ws.get_all_values()
-                for idx, row in enumerate(all_values[1:], start=2):
-                    if row and row[0].lower() == email.lower():
-                        # Обновляем строку
-                        ws.update(f"A{idx}:D{idx}", [[
-                            email,
-                            schedule_id,
-                            datetime.now().strftime("%Y-%m-%d"),
-                            admin_email
-                        ]])
-                        logger.info(f"Updated schedule assignment for {email}")
+            # Проверяем, является ли это Supabase API
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Для Supabase API используем прямое обновление/вставку
+                if existing:
+                    # Обновляем существующее назначение
+                    try:
+                        # Находим id записи по email (пробуем разные варианты полей)
+                        assignment_id = None
+                        for email_field in ['email', 'user_email']:
+                            try:
+                                find_response = self.sheets.client.table('user_break_assignments')\
+                                    .select('id')\
+                                    .eq(email_field, email.lower())\
+                                    .execute()
+                                
+                                if find_response.data:
+                                    assignment_id = find_response.data[0]['id']
+                                    break
+                            except Exception:
+                                continue
+                        
+                        if assignment_id:
+                            # Нужно найти UUID шаблона по его имени или ID
+                            schedule_uuid = None
+                            try:
+                                import re
+                                uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+                                is_uuid = uuid_pattern.match(str(schedule_id).strip())
+                                
+                                if is_uuid:
+                                    # Это уже UUID, проверяем что шаблон существует
+                                    find_schedule = self.sheets.client.table('break_schedules')\
+                                        .select('id')\
+                                        .eq('id', schedule_id)\
+                                        .execute()
+                                    if find_schedule.data:
+                                        schedule_uuid = find_schedule.data[0]['id']
+                                    else:
+                                        logger.error(f"Schedule UUID not found: {schedule_id}")
+                                        return False
+                                else:
+                                    # Это не UUID, ищем по имени
+                                    find_schedule = self.sheets.client.table('break_schedules')\
+                                        .select('id')\
+                                        .eq('name', schedule_id)\
+                                        .execute()
+                                    if find_schedule.data:
+                                        schedule_uuid = find_schedule.data[0]['id']
+                                    else:
+                                        logger.error(f"Schedule not found by name: {schedule_id}")
+                                        return False
+                            except Exception as e:
+                                logger.error(f"Failed to find schedule UUID: {e}", exc_info=True)
+                                return False
+                            
+                            # Обновляем назначение с UUID шаблона
+                            try:
+                                self.sheets.client.table('user_break_assignments')\
+                                    .update({'schedule_id': schedule_uuid})\
+                                    .eq('id', assignment_id)\
+                                    .execute()
+                                logger.info(f"Updated schedule assignment for {email}")
+                                return True
+                            except Exception as update_error:
+                                logger.error(f"Failed to update assignment: {update_error}", exc_info=True)
+                                return False
+                        else:
+                            logger.error(f"Assignment not found for {email}")
+                            return False
+                    except Exception as e:
+                        logger.error(f"Failed to update assignment: {e}", exc_info=True)
+                        return False
+                else:
+                    # Создаём новое назначение через append_row (который теперь поддерживает user_break_assignments)
+                    # Передаём только обязательные поля (email и schedule_id)
+                    result = ws.append_row([
+                        email,
+                        schedule_id,
+                        datetime.now().strftime("%Y-%m-%d"),  # Может быть проигнорировано если поле отсутствует
+                        admin_email  # Может быть проигнорировано если поле отсутствует
+                    ])
+                    if result:
+                        logger.info(f"Created schedule assignment for {email}")
                         return True
+                    else:
+                        logger.error(f"Failed to create assignment for {email}")
+                        return False
             else:
-                # Создаём новое назначение
-                ws.append_row([
-                    email,
-                    schedule_id,
-                    datetime.now().strftime("%Y-%m-%d"),
-                    admin_email
-                ])
-                logger.info(f"Created schedule assignment for {email}")
-                return True
+                # Старый код для Google Sheets
+                if existing:
+                    # Обновляем существующее назначение
+                    # Находим номер строки
+                    all_values = ws.get_all_values()
+                    for idx, row in enumerate(all_values[1:], start=2):
+                        if row and row[0].lower() == email.lower():
+                            # Обновляем строку
+                            ws.update(f"A{idx}:D{idx}", [[
+                                email,
+                                schedule_id,
+                                datetime.now().strftime("%Y-%m-%d"),
+                                admin_email
+                            ]])
+                            logger.info(f"Updated schedule assignment for {email}")
+                            return True
+                else:
+                    # Создаём новое назначение
+                    ws.append_row([
+                        email,
+                        schedule_id,
+                        datetime.now().strftime("%Y-%m-%d"),
+                        admin_email
+                    ])
+                    logger.info(f"Created schedule assignment for {email}")
+                    return True
             
             return False
             

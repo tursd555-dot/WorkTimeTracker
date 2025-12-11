@@ -4,6 +4,28 @@ API Adapter - Переключение между Google Sheets и Supabase
 """
 import os
 import logging
+from pathlib import Path
+
+# Загружаем .env файл ПЕРЕД чтением переменных окружения
+try:
+    from dotenv import load_dotenv
+    
+    # Ищем .env файл
+    env_candidates = [
+        Path.cwd() / ".env",
+        Path(__file__).parent / ".env",
+    ]
+    
+    for env_path in env_candidates:
+        if env_path.exists():
+            load_dotenv(env_path, override=False)
+            break
+    else:
+        # Стандартный поиск
+        load_dotenv()
+except ImportError:
+    # dotenv не установлен, продолжаем без него
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +39,9 @@ USE_BACKEND = os.getenv("USE_BACKEND", "supabase")  # supabase или sheets
 # Supabase credentials
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://jtgaobxbwibjcvasefzi.supabase.co")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")  # Будет взят из переменных окружения
+
+# Отладочная информация
+logger.debug(f"USE_BACKEND={USE_BACKEND}, SUPABASE_URL={SUPABASE_URL}, SUPABASE_KEY={'SET' if SUPABASE_KEY else 'NOT SET'}")
 
 # ============================================================================
 # ADAPTER
@@ -55,15 +80,24 @@ if USE_BACKEND == "supabase":
 if USE_BACKEND == "sheets":
     logger.info("📊 Using Google Sheets backend")
     
-    from sheets_api import SheetsAPI, get_sheets_api
+    from sheets_api import SheetsAPI, get_sheets_api, SheetsAPIError
     
     logger.info("✅ Google Sheets API loaded")
+else:
+    # Для Supabase создаем заглушку SheetsAPIError для совместимости
+    class SheetsAPIError(Exception):
+        """Исключение для ошибок API (совместимость с sheets_api)"""
+        def __init__(self, message: str, is_retryable: bool = False, details: str = ""):
+            self.message = message
+            self.is_retryable = is_retryable
+            self.details = details
+            super().__init__(message)
 
 # ============================================================================
 # EXPORT
 # ============================================================================
 
-__all__ = ["get_sheets_api", "SheetsAPI", "USE_BACKEND"]
+__all__ = ["get_sheets_api", "SheetsAPI", "SheetsAPIError", "USE_BACKEND"]
 
 
 if __name__ == "__main__":

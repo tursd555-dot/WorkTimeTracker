@@ -320,14 +320,18 @@ class EmployeeApp(QWidget):
     def _is_session_finished_remote(self) -> bool:
         """
         True — если в ActiveSessions текущая (или последняя по email) сессия
-        имеет статус 'finished' или 'kicked'.
+        имеет статус 'finished', 'kicked' или 'completed'.
+        
+        ВАЖНО: В Supabase статус может автоматически меняться с 'kicked' на 'completed'
+        из-за триггеров/constraints при установке logout_time, поэтому проверяем и 'completed'.
         """
         try:
             api = get_sheets_api()
             if hasattr(api, "check_user_session_status"):
                 st = str(api.check_user_session_status(self.email, self.session_id)).strip().lower()
-                logger.debug(f"[ACTIVESESSIONS] status for {self.email}/{self.session_id}: {st}")
-                if st in ("finished", "kicked"):
+                logger.info(f"[ACTIVESESSIONS] status for {self.email}/{self.session_id}: {st}")  # INFO для отладки
+                if st in ("finished", "kicked", "completed"):
+                    logger.info(f"[ACTIVESESSIONS] ✅ Сессия завершена (статус: {st})")
                     return True
 
             if hasattr(api, "get_all_active_sessions"):
@@ -338,10 +342,12 @@ class EmployeeApp(QWidget):
                         last_for_email = s
                 if last_for_email:
                     st2 = str(last_for_email.get("Status", "")).strip().lower()
-                    logger.debug(f"[ACTIVESESSIONS] fallback status for {self.email}: {st2}")
-                    return st2 in ("finished", "kicked")
+                    logger.info(f"[ACTIVESESSIONS] fallback status for {self.email}: {st2}")  # INFO для отладки
+                    if st2 in ("finished", "kicked", "completed"):
+                        logger.info(f"[ACTIVESESSIONS] ✅ Сессия завершена (fallback статус: {st2})")
+                        return True
         except Exception as e:
-            logger.debug(f"_is_session_finished_remote error: {e}")
+            logger.error(f"_is_session_finished_remote error: {e}", exc_info=True)  # ERROR для отладки
         return False
 
     def _is_shift_ended(self) -> bool:
@@ -686,13 +692,13 @@ class EmployeeApp(QWidget):
         self._admin_msg.setWindowTitle("Смена завершена администратором")
         self._admin_msg.setWindowModality(Qt.WindowModal)
         self._admin_msg.setText("Вы были разлогинены администратором.")
-        self._admin_msg.setInformativeText("Приложение закроется через 10 секунд.")
+        self._admin_msg.setInformativeText("Приложение закроется через 3 секунды.")
         self._admin_msg.setIcon(QMessageBox.Information)
         self._admin_msg.setStandardButtons(QMessageBox.NoButton)
         self._admin_msg.setWindowFlags(self._admin_msg.windowFlags() & ~Qt.WindowCloseButtonHint)
         self._admin_msg.show()
 
-        self._admin_logout_countdown = 10
+        self._admin_logout_countdown = 3
         self._admin_timer = QTimer(self)
         
         def _tick():
@@ -705,9 +711,12 @@ class EmployeeApp(QWidget):
                     self._admin_msg.close()
                 except Exception:
                     pass
-                # Ждём завершения отправки данных
-                send_thread.join(timeout=3)
-                self._enter_background_until_synced()
+                # Ждём завершения отправки данных (с коротким таймаутом)
+                send_thread.join(timeout=2)
+                # Закрываем приложение сразу, не ждём синхронизации
+                # Синхронизация продолжится в фоне через auto_sync, но приложение закроется
+                logger.info("[ADMIN_LOGOUT] Закрытие приложения после принудительного разлогинивания")
+                QApplication.quit()
                 
         self._admin_timer.timeout.connect(_tick)
         self._admin_timer.start(1000)
@@ -736,7 +745,7 @@ class EmployeeApp(QWidget):
         self._sync_wait_timer.setInterval(1000)  # ✅ Проверяем каждую секунду
         
         check_count = 0
-        max_checks = 300  # 5 минут максимум
+        max_checks = 30  # 30 секунд максимум (уменьшено с 5 минут)
         
         def _poll():
             nonlocal check_count
@@ -752,17 +761,19 @@ class EmployeeApp(QWidget):
                 self._tray.setToolTip(f"Синхронизация… Ожидает отправки: {pending}")
                 logger.debug(f"Ожидание синхронизации: {pending} записей (проверка {check_count}/{max_checks})")
                 
-                # Если прошло 5 минут - все равно закрываемся
+                # Если прошло 30 секунд - все равно закрываемся
                 if check_count >= max_checks:
-                    logger.warning(f"Таймаут ожидания синхронизации. Осталось {pending} несинхронизированных записей.")
+                    logger.warning(f"Таймаут ожидания синхронизации (30 сек). Осталось {pending} несинхронизированных записей. Закрываем приложение.")
                     self._sync_wait_timer.stop()
-                    self._tray.hide()
+                    if hasattr(self, '_tray'):
+                        self._tray.hide()
                     QApplication.quit()
                 return
                 
             logger.info("✅ Все данные синхронизированы, завершаем приложение")
             self._sync_wait_timer.stop()
-            self._tray.hide()
+            if hasattr(self, '_tray'):
+                self._tray.hide()
             QApplication.quit()
             
         self._sync_wait_timer.timeout.connect(_poll)
