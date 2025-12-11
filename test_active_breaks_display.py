@@ -92,18 +92,37 @@ def test_active_breaks():
                         email = row.get('Email') or row.get('email') or 'N/A'
                         break_type = row.get('BreakType') or row.get('break_type') or 'N/A'
                         start_time = row.get('StartTime') or row.get('start_time') or 'N/A'
-                        end_time = row.get('EndTime') or row.get('end_time') or 'N/A'
+                        end_time = row.get('EndTime') or row.get('end_time') or None
                         status = row.get('Status') or row.get('status') or 'N/A'
                         
-                        is_active_check = (not end_time or end_time == '') and (status == 'Active' or status == '' or not status)
+                        has_end_time = end_time is not None and str(end_time).strip() != ''
+                        is_active_status = status == 'Active' or status == '' or status is None or not status
+                        is_active_check = not has_end_time and is_active_status
                         
                         print(f"         {i}. Email: {email}")
                         print(f"            BreakType: {break_type}")
                         print(f"            StartTime: {start_time}")
-                        print(f"            EndTime: {end_time} {'(пусто)' if not end_time else ''}")
+                        print(f"            EndTime: {end_time} {'(пусто)' if not has_end_time else '(есть)'}")
                         print(f"            Status: {status}")
-                        print(f"            Активен? {is_active_check}")
+                        print(f"            Активен? {is_active_check} (has_end_time={has_end_time}, is_active_status={is_active_status})")
                         print()
+                
+                # Проверяем все записи БЕЗ EndTime (не только за сегодня)
+                print("   6. Проверка всех записей БЕЗ EndTime (все даты)...")
+                active_rows_all = [
+                    r for r in all_rows 
+                    if not (r.get('EndTime') or r.get('end_time')) or str(r.get('EndTime') or r.get('end_time') or '').strip() == ''
+                ]
+                print(f"      Всего записей БЕЗ EndTime: {len(active_rows_all)}")
+                if active_rows_all:
+                    print("      📋 Записи БЕЗ EndTime:")
+                    for i, row in enumerate(active_rows_all[:5], 1):
+                        email = row.get('Email') or row.get('email') or 'N/A'
+                        break_type = row.get('BreakType') or row.get('break_type') or 'N/A'
+                        start_time = row.get('StartTime') or row.get('start_time') or 'N/A'
+                        status = row.get('Status') or row.get('status') or 'N/A'
+                        print(f"         {i}. Email: {email}, BreakType: {break_type}, StartTime: {start_time}, Status: {status}")
+                print()
         except Exception as e:
             print(f"   ❌ Ошибка при получении активных перерывов: {e}")
             import traceback
