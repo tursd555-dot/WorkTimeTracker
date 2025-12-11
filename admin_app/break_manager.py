@@ -1411,17 +1411,30 @@ class BreakManager:
                                         is_violator = True
                                         violation_reasons.append(f"Превышено количество ({today_count}/{limit.daily_count})")
                                 
-                                # 3. Проверка: перерыв вне временного окна
+                                # 3. Проверка: перерыв вне временного окна (проверяем время НАЧАЛА перерыва)
                                 if schedule.windows:
-                                    current_time = datetime.now().time()
-                                    in_window = False
-                                    for window in schedule.windows:
-                                        if window.break_type == break_type and window.is_within(current_time):
-                                            in_window = True
-                                            break
-                                    if not in_window:
-                                        is_violator = True
-                                        violation_reasons.append("Перерыв вне временного окна")
+                                    try:
+                                        # Парсим время начала перерыва
+                                        start_time_clean = start_time_str.replace('Z', '').split('+')[0].split('.')[0]
+                                        try:
+                                            start_dt = datetime.strptime(start_time_clean, "%Y-%m-%d %H:%M:%S")
+                                        except ValueError:
+                                            try:
+                                                start_dt = datetime.strptime(start_time_clean, "%Y-%m-%dT%H:%M:%S")
+                                            except ValueError:
+                                                start_dt = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                                        
+                                        break_start_time = start_dt.time()
+                                        in_window = False
+                                        for window in schedule.windows:
+                                            if window.break_type == break_type and window.is_within(break_start_time):
+                                                in_window = True
+                                                break
+                                        if not in_window:
+                                            is_violator = True
+                                            violation_reasons.append("Перерыв вне временного окна")
+                                    except Exception as e:
+                                        logger.debug(f"Failed to check time window for {email}: {e}")
                             
                             # 4. Проверка: превышен лимит времени
                             is_over_limit = duration > limit_minutes
