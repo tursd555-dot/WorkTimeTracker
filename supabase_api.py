@@ -200,6 +200,21 @@ class SupabaseAPI:
                             'created_at': 'CreatedAt',
                             'updated_at': 'UpdatedAt',
                         }
+                    elif table_name == "break_violations":
+                        key_mapping = {
+                            'id': 'Id',
+                            'timestamp': 'Timestamp',
+                            'email': 'Email',
+                            'session_id': 'SessionID',
+                            'violation_type': 'ViolationType',
+                            'details': 'Details',
+                            'status': 'Status',
+                            'created_at': 'CreatedAt',
+                            'updated_at': 'UpdatedAt',
+                        }
+                    else:
+                        key_mapping = {}
+                    
                     pascal_key = key_mapping.get(key)
                     if not pascal_key:
                         # Общий случай: snake_case -> PascalCase
@@ -549,6 +564,49 @@ class SupabaseAPI:
                         return False
                 else:
                     logger.error(f"Invalid values length: {len(values)}, expected at least 8")
+                    return False
+            elif table_name == "break_violations":
+                # Формат: [timestamp, email, session_id, violation_type, details, status]
+                if len(values) >= 6:
+                    timestamp = str(values[0]) if values[0] else None
+                    email_val = str(values[1]).lower() if values[1] else None
+                    session_id = str(values[2]) if values[2] else None
+                    violation_type = str(values[3]) if values[3] else None
+                    details = str(values[4]) if values[4] else None
+                    status = str(values[5]) if values[5] else "pending"
+                    
+                    if not email_val or not violation_type:
+                        logger.error(f"Missing required fields for violation: email={email_val}, violation_type={violation_type}")
+                        return False
+                    
+                    # Преобразуем timestamp в формат ISO, если нужно
+                    if timestamp and len(timestamp) == 19:  # Формат "YYYY-MM-DD HH:MM:SS"
+                        timestamp = timestamp.replace(" ", "T") + "+00:00"
+                    elif timestamp and len(timestamp) == 10:  # Формат "YYYY-MM-DD"
+                        timestamp = timestamp + "T00:00:00+00:00"
+                    
+                    violation_data = {
+                        'timestamp': timestamp or datetime.now().isoformat(),
+                        'email': email_val,
+                        'session_id': session_id,
+                        'violation_type': violation_type,
+                        'details': details or '',
+                        'status': status
+                    }
+                    
+                    try:
+                        response = self.client.table('break_violations').insert(violation_data).execute()
+                        if response.data:
+                            logger.info(f"Created violation: email={email_val}, type={violation_type}")
+                            return True
+                        else:
+                            logger.warning(f"No data returned when inserting violation")
+                            return False
+                    except Exception as insert_error:
+                        logger.error(f"Failed to insert violation: {insert_error}", exc_info=True)
+                        return False
+                else:
+                    logger.error(f"Invalid values length: {len(values)}, expected at least 6")
                     return False
             else:
                 # Для других таблиц пока не реализовано

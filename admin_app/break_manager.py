@@ -1213,7 +1213,7 @@ class BreakManager:
             if date_to:
                 # Для date_to используем <= только если указано время
                 if len(date_to) == 10:  # Формат YYYY-MM-DD
-                    # Включаем весь день
+                    # Включаем весь день - сравниваем первые 10 символов
                     filtered = [r for r in filtered if r.get("Timestamp", "")[:10] <= date_to]
                 else:
                     filtered = [r for r in filtered if r.get("Timestamp", "") <= date_to]
