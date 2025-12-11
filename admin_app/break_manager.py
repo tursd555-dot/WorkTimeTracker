@@ -367,35 +367,57 @@ class BreakManager:
                 if existing:
                     # Обновляем существующее назначение
                     try:
-                        # Находим id записи по email
-                        find_response = self.sheets.client.table('user_break_assignments')\
-                            .select('id')\
-                            .eq('email', email.lower())\
-                            .execute()
+                        # Находим id записи по email (пробуем разные варианты полей)
+                        assignment_id = None
+                        for email_field in ['email', 'user_email']:
+                            try:
+                                find_response = self.sheets.client.table('user_break_assignments')\
+                                    .select('id')\
+                                    .eq(email_field, email.lower())\
+                                    .execute()
+                                
+                                if find_response.data:
+                                    assignment_id = find_response.data[0]['id']
+                                    break
+                            except Exception:
+                                continue
                         
-                        if find_response.data:
-                            assignment_id = find_response.data[0]['id']
-                            update_data = {
-                                'schedule_id': schedule_id,
-                                'effective_date': datetime.now().strftime("%Y-%m-%d"),
-                                'assigned_by': admin_email
-                            }
-                            self.sheets.client.table('user_break_assignments')\
-                                .update(update_data)\
-                                .eq('id', assignment_id)\
-                                .execute()
-                            logger.info(f"Updated schedule assignment for {email}")
-                            return True
+                        if assignment_id:
+                            # Пробуем разные варианты полей для обновления
+                            update_variants = [
+                                {'schedule_id': schedule_id},
+                                {'schedule_name': schedule_id},
+                                {'break_schedule_id': schedule_id}
+                            ]
+                            
+                            for update_data in update_variants:
+                                try:
+                                    self.sheets.client.table('user_break_assignments')\
+                                        .update(update_data)\
+                                        .eq('id', assignment_id)\
+                                        .execute()
+                                    logger.info(f"Updated schedule assignment for {email}")
+                                    return True
+                                except Exception as update_error:
+                                    logger.debug(f"Update failed with {update_data}: {update_error}")
+                                    continue
+                            
+                            logger.error(f"Failed to update assignment: all variants failed")
+                            return False
+                        else:
+                            logger.error(f"Assignment not found for {email}")
+                            return False
                     except Exception as e:
                         logger.error(f"Failed to update assignment: {e}", exc_info=True)
                         return False
                 else:
                     # Создаём новое назначение через append_row (который теперь поддерживает user_break_assignments)
+                    # Передаём только обязательные поля (email и schedule_id)
                     result = ws.append_row([
                         email,
                         schedule_id,
-                        datetime.now().strftime("%Y-%m-%d"),
-                        admin_email
+                        datetime.now().strftime("%Y-%m-%d"),  # Может быть проигнорировано если поле отсутствует
+                        admin_email  # Может быть проигнорировано если поле отсутствует
                     ])
                     if result:
                         logger.info(f"Created schedule assignment for {email}")
