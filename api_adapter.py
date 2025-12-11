@@ -40,6 +40,9 @@ USE_BACKEND = os.getenv("USE_BACKEND", "supabase")  # supabase или sheets
 SUPABASE_URL = os.getenv("SUPABASE_URL", "https://jtgaobxbwibjcvasefzi.supabase.co")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")  # Будет взят из переменных окружения
 
+# Отладочная информация
+logger.debug(f"USE_BACKEND={USE_BACKEND}, SUPABASE_URL={SUPABASE_URL}, SUPABASE_KEY={'SET' if SUPABASE_KEY else 'NOT SET'}")
+
 # ============================================================================
 # ADAPTER
 # ============================================================================
