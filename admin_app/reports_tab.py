@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, QDate, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QColor
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from typing import List, Dict, Optional, Any
 from collections import defaultdict
 import logging
@@ -1491,6 +1491,7 @@ class ReportsTab(QWidget):
                 action_type = entry.get('action_type', '')
                 timestamp_str = entry.get('timestamp', '')
                 session_id = entry.get('session_id', '')
+                status = entry.get('status', '')
                 
                 if action_type == 'LOGIN':
                     if session_id and session_id not in sessions_dict:
@@ -1498,7 +1499,8 @@ class ReportsTab(QWidget):
                             'login_time': timestamp_str,
                             'logout_time': None,
                             'session_id': session_id,
-                            'status': entry.get('status', '')
+                            'login_status': status,
+                            'logout_status': None
                         }
                     elif not session_id:
                         # Если нет session_id, создаем уникальный ключ
@@ -1507,18 +1509,35 @@ class ReportsTab(QWidget):
                             'login_time': timestamp_str,
                             'logout_time': None,
                             'session_id': '',
-                            'status': entry.get('status', '')
+                            'login_status': status,
+                            'logout_status': None
                         }
                 elif action_type == 'LOGOUT':
                     # Ищем соответствующую сессию LOGIN
+                    found = False
                     if session_id and session_id in sessions_dict:
                         sessions_dict[session_id]['logout_time'] = timestamp_str
+                        sessions_dict[session_id]['logout_status'] = status
+                        found = True
                     else:
                         # Если не нашли по session_id, ищем последнюю незавершенную сессию
                         for key, session in sessions_dict.items():
                             if session['logout_time'] is None:
                                 session['logout_time'] = timestamp_str
+                                session['logout_status'] = status
+                                found = True
                                 break
+                    
+                    # Если не нашли соответствующую сессию, создаем новую (неполную)
+                    if not found:
+                        incomplete_key = f"incomplete_{len(sessions_dict)}"
+                        sessions_dict[incomplete_key] = {
+                            'login_time': None,
+                            'logout_time': timestamp_str,
+                            'session_id': session_id,
+                            'login_status': None,
+                            'logout_status': status
+                        }
             
             # Преобразуем в список
             sessions = list(sessions_dict.values())
@@ -1526,52 +1545,91 @@ class ReportsTab(QWidget):
             # Заполняем таблицу
             self.login_logout_table.setRowCount(len(sessions))
             
+            # Получаем локальный часовой пояс для преобразования времени
+            try:
+                from datetime import timezone as tz
+                local_tz = datetime.now().astimezone().tzinfo
+                test_dt = datetime.now(tz.utc)
+                local_dt = test_dt.astimezone(local_tz)
+                offset = local_dt.utcoffset()
+                local_offset_hours = offset.total_seconds() / 3600
+            except:
+                local_offset_hours = 3  # По умолчанию UTC+3 для Москвы
+            
             for row, session in enumerate(sessions):
                 login_time = session['login_time']
                 logout_time = session['logout_time'] or "В процессе..."
-                session_id = session['session_id']
-                status = session['status'] or "N/A"
+                login_status = session.get('login_status', '') or "N/A"
+                logout_status = session.get('logout_status', '') or "N/A"
                 
-                # Форматируем время
+                # Формируем статус: показываем оба, если разные
+                if login_status != "N/A" and logout_status != "N/A" and login_status != logout_status:
+                    status_display = f"{login_status} → {logout_status}"
+                elif logout_status != "N/A":
+                    status_display = logout_status
+                else:
+                    status_display = login_status
+                
+                # Форматируем время с преобразованием в локальное
                 try:
-                    if 'T' in login_time:
-                        login_dt = datetime.fromisoformat(login_time.replace('Z', '+00:00'))
-                        login_formatted = login_dt.strftime('%Y-%m-%d %H:%M:%S')
+                    if login_time:
+                        if 'T' in login_time:
+                            login_dt_utc = datetime.fromisoformat(login_time.replace('Z', '+00:00'))
+                            if login_dt_utc.tzinfo is None:
+                                login_dt_utc = login_dt_utc.replace(tzinfo=tz.utc)
+                            login_dt_local = login_dt_utc + timedelta(hours=local_offset_hours)
+                            login_formatted = login_dt_local.strftime('%Y-%m-%d %H:%M:%S')
+                        else:
+                            login_formatted = login_time[:19] if len(login_time) >= 19 else login_time
                     else:
-                        login_formatted = login_time[:19] if len(login_time) >= 19 else login_time
-                except:
-                    login_formatted = login_time
+                        login_formatted = "N/A"
+                except Exception as e:
+                    logger.warning(f"Failed to format login time: {e}")
+                    login_formatted = login_time if login_time else "N/A"
                 
                 try:
                     if logout_time != "В процессе...":
                         if 'T' in logout_time:
-                            logout_dt = datetime.fromisoformat(logout_time.replace('Z', '+00:00'))
-                            logout_formatted = logout_dt.strftime('%Y-%m-%d %H:%M:%S')
+                            logout_dt_utc = datetime.fromisoformat(logout_time.replace('Z', '+00:00'))
+                            if logout_dt_utc.tzinfo is None:
+                                logout_dt_utc = logout_dt_utc.replace(tzinfo=tz.utc)
+                            logout_dt_local = logout_dt_utc + timedelta(hours=local_offset_hours)
+                            logout_formatted = logout_dt_local.strftime('%Y-%m-%d %H:%M:%S')
                         else:
                             logout_formatted = logout_time[:19] if len(logout_time) >= 19 else logout_time
                     else:
                         logout_formatted = logout_time
-                except:
-                    logout_formatted = logout_time
+                except Exception as e:
+                    logger.warning(f"Failed to format logout time: {e}")
+                    logout_formatted = logout_time if logout_time != "В процессе..." else "В процессе..."
                 
                 # Вычисляем длительность сессии
-                if logout_time != "В процессе...":
+                if logout_time != "В процессе..." and login_time:
                     try:
-                        login_dt = datetime.fromisoformat(login_time.replace('Z', '+00:00'))
-                        logout_dt = datetime.fromisoformat(logout_time.replace('Z', '+00:00'))
-                        duration = (logout_dt - login_dt).total_seconds()
+                        if 'T' in login_time:
+                            login_dt_utc = datetime.fromisoformat(login_time.replace('Z', '+00:00'))
+                        else:
+                            login_dt_utc = datetime.strptime(login_time[:19], '%Y-%m-%d %H:%M:%S').replace(tzinfo=tz.utc)
+                        
+                        if 'T' in logout_time:
+                            logout_dt_utc = datetime.fromisoformat(logout_time.replace('Z', '+00:00'))
+                        else:
+                            logout_dt_utc = datetime.strptime(logout_time[:19], '%Y-%m-%d %H:%M:%S').replace(tzinfo=tz.utc)
+                        
+                        duration = (logout_dt_utc - login_dt_utc).total_seconds()
                         hours = int(duration // 3600)
                         mins = int((duration % 3600) // 60)
                         duration_str = f"{hours}:{mins:02d}"
-                    except:
+                    except Exception as e:
+                        logger.warning(f"Failed to calculate duration: {e}")
                         duration_str = "N/A"
                 else:
-                    duration_str = "В процессе..."
+                    duration_str = "В процессе..." if logout_time == "В процессе..." else "N/A"
                 
                 self.login_logout_table.setItem(row, 0, QTableWidgetItem(login_formatted))
                 self.login_logout_table.setItem(row, 1, QTableWidgetItem(logout_formatted))
                 self.login_logout_table.setItem(row, 2, QTableWidgetItem(duration_str))
-                self.login_logout_table.setItem(row, 3, QTableWidgetItem(status))
+                self.login_logout_table.setItem(row, 3, QTableWidgetItem(status_display))
             
         except Exception as e:
             logger.error(f"Failed to update login/logout report: {e}", exc_info=True)
