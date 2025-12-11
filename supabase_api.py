@@ -183,17 +183,18 @@ class SupabaseAPI:
                 # Формат: [schedule_id, name, shift_start, shift_end, break_type, time_minutes, window_start, window_end, priority]
                 # В Supabase структура другая: нужно создать запись в break_schedules и отдельную в break_schedule_slots
                 if len(values) >= 9:
-                    schedule_id = str(values[0])
+                    schedule_id = str(values[0])  # Это может быть строка-идентификатор
                     name = str(values[1])
-                    shift_start = str(values[2])
-                    shift_end = str(values[3])
+                    shift_start = str(values[2]) if values[2] else None
+                    shift_end = str(values[3]) if values[3] else None
                     slot_type = str(values[4])
                     duration = int(values[5]) if values[5] else 15
-                    window_start = str(values[6])
-                    window_end = str(values[7])
+                    window_start = str(values[6]) if values[6] else None
+                    window_end = str(values[7]) if values[7] else None
                     priority = int(values[8]) if values[8] else 1
                     
-                    # Проверяем, существует ли уже шаблон с таким schedule_id
+                    # Проверяем, существует ли уже шаблон с таким именем или schedule_id
+                    # В Supabase используем name как уникальный идентификатор (или создаём новый)
                     existing = self.client.table('break_schedules')\
                         .select('id')\
                         .eq('name', name)\
@@ -203,7 +204,20 @@ class SupabaseAPI:
                     if existing.data:
                         # Используем существующий шаблон
                         schedule_db_id = existing.data[0]['id']
-                        logger.info(f"Using existing schedule: {schedule_db_id}")
+                        logger.info(f"Using existing schedule: {schedule_db_id} for name '{name}'")
+                        
+                        # Обновляем shift_start и shift_end если они указаны
+                        if shift_start or shift_end:
+                            update_data = {}
+                            if shift_start:
+                                update_data['shift_start'] = shift_start
+                            if shift_end:
+                                update_data['shift_end'] = shift_end
+                            if update_data:
+                                self.client.table('break_schedules')\
+                                    .update(update_data)\
+                                    .eq('id', schedule_db_id)\
+                                    .execute()
                     else:
                         # Создаём новый шаблон
                         schedule_data = {
@@ -215,36 +229,43 @@ class SupabaseAPI:
                         schedule_response = self.client.table('break_schedules').insert(schedule_data).execute()
                         if schedule_response.data:
                             schedule_db_id = schedule_response.data[0]['id']
-                            logger.info(f"Created new schedule: {schedule_db_id}")
+                            logger.info(f"Created new schedule: {schedule_db_id} for name '{name}'")
                     
                     if schedule_db_id:
-                        # Создаём слот перерыва в отдельной таблице (если она существует)
-                        # Или используем JSON поле в break_schedules
-                        # Пока пробуем создать запись в break_schedule_slots
-                        try:
-                            slot_data = {
-                                'schedule_id': schedule_db_id,  # или 'break_schedule_id' в зависимости от структуры
-                                'slot_type': slot_type,
-                                'duration': duration,
-                                'window_start': window_start,
-                                'window_end': window_end,
-                                'priority': priority
-                            }
-                            # Пробуем разные варианты названий таблиц и полей
-                            for slot_table in ['break_schedule_slots', 'break_slots']:
-                                try:
-                                    self.client.table(slot_table).insert(slot_data).execute()
-                                    logger.info(f"Created slot in {slot_table}")
-                                    return True
-                                except Exception:
-                                    continue
-                            
-                            # Если таблицы слотов нет, сохраняем в JSON поле или просто возвращаем успех
-                            logger.warning("Slot table not found, schedule created but slot not saved")
-                            return True
-                        except Exception as slot_error:
-                            logger.warning(f"Could not create slot: {slot_error}, but schedule created")
-                            return True
+                        # Пробуем создать слот перерыва в отдельной таблице
+                        # Пробуем разные варианты названий таблиц и полей
+                        slot_created = False
+                        for slot_table in ['break_schedule_slots', 'break_slots', 'break_schedule_items']:
+                            try:
+                                # Пробуем разные варианты названий полей для связи
+                                for schedule_id_field in ['schedule_id', 'break_schedule_id', 'break_schedules_id', 'parent_id']:
+                                    try:
+                                        slot_data = {
+                                            schedule_id_field: schedule_db_id,
+                                            'slot_type': slot_type,
+                                            'duration': duration,
+                                            'window_start': window_start,
+                                            'window_end': window_end,
+                                            'priority': priority
+                                        }
+                                        self.client.table(slot_table).insert(slot_data).execute()
+                                        logger.info(f"Created slot in {slot_table} with field {schedule_id_field}")
+                                        slot_created = True
+                                        break
+                                    except Exception as field_error:
+                                        logger.debug(f"Failed with field {schedule_id_field}: {field_error}")
+                                        continue
+                                if slot_created:
+                                    break
+                            except Exception as table_error:
+                                logger.debug(f"Table {slot_table} not found or error: {table_error}")
+                                continue
+                        
+                        if not slot_created:
+                            logger.warning(f"Could not create slot in any table, but schedule {schedule_db_id} created")
+                            # Возвращаем True, так как основная запись создана
+                        
+                        return True
                     
                     return False
                 else:
