@@ -93,6 +93,46 @@ class BreakManager:
         self.sheets = sheets_api
         self._cache: Dict[str, BreakSchedule] = {}
         
+        # Импорт настроек ПЕРЕД использованием
+        try:
+            from config import (
+                BREAK_SCHEDULES_SHEET,
+                USER_BREAK_ASSIGNMENTS_SHEET,
+                BREAK_USAGE_LOG_SHEET,
+                BREAK_VIOLATIONS_SHEET,
+                BREAK_OVERTIME_THRESHOLD,
+                VIOLATION_TYPE_OUT_OF_WINDOW,
+                VIOLATION_TYPE_OVER_LIMIT,
+                VIOLATION_TYPE_QUOTA_EXCEEDED,
+                SEVERITY_INFO,
+                SEVERITY_WARNING,
+                SEVERITY_CRITICAL
+            )
+            self.SCHEDULES_SHEET = BREAK_SCHEDULES_SHEET
+            self.ASSIGNMENTS_SHEET = USER_BREAK_ASSIGNMENTS_SHEET
+            self.USAGE_LOG_SHEET = BREAK_USAGE_LOG_SHEET
+            self.VIOLATIONS_SHEET = BREAK_VIOLATIONS_SHEET
+            self.OVERTIME_THRESHOLD = BREAK_OVERTIME_THRESHOLD
+            self.VIOLATION_OUT_OF_WINDOW = VIOLATION_TYPE_OUT_OF_WINDOW
+            self.VIOLATION_OVER_LIMIT = VIOLATION_TYPE_OVER_LIMIT
+            self.VIOLATION_QUOTA_EXCEEDED = VIOLATION_TYPE_QUOTA_EXCEEDED
+            self.SEVERITY_INFO = SEVERITY_INFO
+            self.SEVERITY_WARNING = SEVERITY_WARNING
+            self.SEVERITY_CRITICAL = SEVERITY_CRITICAL
+        except ImportError as e:
+            logger.warning(f"Failed to import config: {e}, using defaults")
+            self.SCHEDULES_SHEET = "BreakSchedules"
+            self.ASSIGNMENTS_SHEET = "UserBreakAssignments"
+            self.USAGE_LOG_SHEET = "BreakUsageLog"
+            self.VIOLATIONS_SHEET = "BreakViolations"
+            self.OVERTIME_THRESHOLD = 2
+            self.VIOLATION_OUT_OF_WINDOW = "OUT_OF_WINDOW"
+            self.VIOLATION_OVER_LIMIT = "OVER_LIMIT"
+            self.VIOLATION_QUOTA_EXCEEDED = "QUOTA_EXCEEDED"
+            self.SEVERITY_INFO = "INFO"
+            self.SEVERITY_WARNING = "WARNING"
+            self.SEVERITY_CRITICAL = "CRITICAL"
+        
         # Автоматическая очистка старых зависших перерывов при инициализации
         try:
             self._cleanup_old_active_breaks()

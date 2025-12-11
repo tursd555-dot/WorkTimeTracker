@@ -413,39 +413,32 @@ class SupabaseAPI:
                             logger.info(f"Created new schedule: {schedule_db_id} for name '{name}'")
                     
                     if schedule_db_id:
-                        # Создаём слот как отдельную строку в break_schedules
-                        # Используем поля slot_type, window_start, window_end, duration, priority
-                        # Но эти поля могут отсутствовать в схеме, поэтому пробуем разные варианты
+                        # Сохраняем слот как отдельную строку в break_schedules
+                        # Используем поле description для хранения данных слота в JSON формате
+                        # Это позволяет хранить слоты без изменения схемы БД
+                        import json
+                        slot_info = {
+                            'slot_type': slot_type,
+                            'duration': duration,
+                            'window_start': window_start,
+                            'window_end': window_end,
+                            'priority': priority
+                        }
+                        
                         slot_data = {
                             'name': name,  # Связь через name
                             'shift_start': shift_start,
                             'shift_end': shift_end,
+                            'description': json.dumps(slot_info),  # Храним данные слота в JSON
                             'is_active': True
                         }
                         
-                        # Пробуем добавить поля слота (если они есть в схеме)
-                        # В Supabase эти поля могут быть NULL или отсутствовать
                         try:
-                            # Пробуем вставить с полями слота
-                            slot_data_with_fields = slot_data.copy()
-                            slot_data_with_fields.update({
-                                'slot_type': slot_type,
-                                'duration': duration,
-                                'window_start': window_start,
-                                'window_end': window_end,
-                                'priority': priority
-                            })
-                            self.client.table('break_schedules').insert(slot_data_with_fields).execute()
-                            logger.info(f"Created slot row with fields: slot_type={slot_type}, duration={duration}")
-                        except Exception as e:
-                            # Если поля отсутствуют, создаём без них (для совместимости)
-                            logger.debug(f"Could not insert with slot fields, trying without: {e}")
-                            try:
-                                self.client.table('break_schedules').insert(slot_data).execute()
-                                logger.info(f"Created slot row without slot fields (compatibility mode)")
-                            except Exception as insert_error:
-                                logger.error(f"Failed to insert slot row: {insert_error}", exc_info=True)
-                                return False
+                            self.client.table('break_schedules').insert(slot_data).execute()
+                            logger.info(f"Created slot row: slot_type={slot_type}, duration={duration}, window={window_start}-{window_end}")
+                        except Exception as insert_error:
+                            logger.error(f"Failed to insert slot row: {insert_error}", exc_info=True)
+                            return False
                         
                         return True
                     
