@@ -110,10 +110,70 @@ def test_statuses_and_groups():
                     print(f"      {key}: {value}")
                 print()
                 
+                # Анализируем email в work_log
+                emails_in_work_log = defaultdict(int)
+                emails_with_status = defaultdict(set)
+                emails_without_status = []
+                
+                for entry in work_log_data:
+                    email = entry.get('email', '').lower() or entry.get('Email', '').lower()
+                    status = entry.get('status', '') or entry.get('Status', '')
+                    
+                    if email:
+                        emails_in_work_log[email] += 1
+                        if status:
+                            emails_with_status[email].add(status)
+                        else:
+                            emails_without_status.append(email)
+                
+                print(f"   📋 Уникальных email в work_log: {len(emails_in_work_log)}")
+                print(f"   📋 Email с записями (топ-10):")
+                for email, count in sorted(emails_in_work_log.items(), key=lambda x: x[1], reverse=True)[:10]:
+                    print(f"      {email}: {count} записей, статусы: {sorted(emails_with_status.get(email, set()))}")
+                print()
+                
+                if emails_without_status:
+                    unique_no_status = set(emails_without_status)
+                    print(f"   ⚠️  Email с записями без статуса ({len(unique_no_status)}):")
+                    for email in list(unique_no_status)[:10]:
+                        print(f"      {email}")
+                    if len(unique_no_status) > 10:
+                        print(f"      ... и еще {len(unique_no_status) - 10}")
+                    print()
+                
+                # Сравниваем email из work_log с email из групп
+                users_dict = {u.get("Email", "").lower(): u for u in users}
+                users_emails = set(users_dict.keys())
+                work_log_emails = set(emails_in_work_log.keys())
+                
+                print(f"   📋 Сравнение email:")
+                print(f"      Email в users: {len(users_emails)}")
+                print(f"      Email в work_log: {len(work_log_emails)}")
+                
+                emails_only_in_work_log = work_log_emails - users_emails
+                emails_only_in_users = users_emails - work_log_emails
+                
+                if emails_only_in_work_log:
+                    print(f"      ⚠️  Email только в work_log (не найдены в users): {len(emails_only_in_work_log)}")
+                    for email in list(emails_only_in_work_log)[:5]:
+                        print(f"         {email}")
+                    if len(emails_only_in_work_log) > 5:
+                        print(f"         ... и еще {len(emails_only_in_work_log) - 5}")
+                    print()
+                
+                if emails_only_in_users:
+                    print(f"      ⚠️  Email только в users (нет записей в work_log): {len(emails_only_in_users)}")
+                    for email in list(emails_only_in_users)[:10]:
+                        user = users_dict.get(email, {})
+                        group = user.get('Group', 'Без группы')
+                        print(f"         {email} (группа: {group})")
+                    if len(emails_only_in_users) > 10:
+                        print(f"         ... и еще {len(emails_only_in_users) - 10}")
+                    print()
+                
                 # Анализируем статусы
                 statuses = defaultdict(int)
                 statuses_by_group = defaultdict(lambda: defaultdict(int))
-                users_dict = {u.get("Email", "").lower(): u for u in users}
                 
                 for entry in work_log_data:
                     status = entry.get('status', '') or entry.get('Status', '')
@@ -222,6 +282,22 @@ def test_statuses_and_groups():
                     print(f"      ⚠️  Отсутствующие важные статусы: {missing_statuses}")
                 else:
                     print(f"      ✅ Все важные статусы присутствуют")
+                
+                # Проверяем email сотрудников группы и их наличие в work_log
+                print(f"      Проверка email сотрудников группы:")
+                group_emails = {u['email'].lower() for u in group_users}
+                work_log_emails = {entry.get('email', '').lower() or entry.get('Email', '').lower() 
+                                  for entry in group_work_log if entry.get('email') or entry.get('Email')}
+                
+                emails_without_data = group_emails - work_log_emails
+                if emails_without_data:
+                    print(f"         ⚠️  Сотрудники без записей в work_log:")
+                    for email in emails_without_data:
+                        user = next((u for u in group_users if u['email'].lower() == email), None)
+                        name = user['name'] if user else ''
+                        print(f"            {name} ({email})")
+                else:
+                    print(f"         ✅ У всех сотрудников группы есть записи в work_log")
                 
             except Exception as e:
                 print(f"      ❌ Ошибка при проверке группы {group}: {e}")
