@@ -114,19 +114,19 @@ class SyncManager(QObject):
 
         with self._db_lock:
             email = self._db.get_current_user_email()
-            logger.debug(f"Текущий email пользователя: {email}")
+            logger.info(f"📧 Текущий email пользователя: {email}")
             session = self._db.get_active_session(email) if email else None
             session_id = session["session_id"] if session else None
-            logger.debug(f"Активная сессия: session_id={session_id}")
+            logger.info(f"🔑 Активная сессия: session_id={session_id}")
 
         if not email or not session_id:
-            logger.debug("Нет активной сессии для проверки удаленных команд.")
+            logger.warning("❌ Нет активной сессии для проверки удаленных команд.")
             return
 
         try:
-            logger.info(f"Проверка статуса сессии для пользователя {email}, session_id: {session_id}")
+            logger.info(f"🔍 Проверка статуса сессии для пользователя {email}, session_id: {session_id}")
             remote_status = self._check_user_session_status(email, session_id)
-            logger.debug(f"Получен удаленный статус: {remote_status}")
+            logger.info(f"📊 Получен удаленный статус: {remote_status}")
             
             if remote_status == "kicked":
                 logger.info(f"[ADMIN_LOGOUT] Обнаружен статус 'kicked' для пользователя {email}. Испускаем force_logout.")

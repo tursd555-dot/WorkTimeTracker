@@ -323,9 +323,11 @@ class EmployeeApp(QWidget):
         try:
             api = get_sheets_api()
             if hasattr(api, "check_user_session_status"):
+                logger.info(f"🔍 [GUI] Checking session: email={self.email}, session_id={self.session_id}")
                 st = str(api.check_user_session_status(self.email, self.session_id)).strip().lower()
-                logger.debug(f"[ACTIVESESSIONS] status for {self.email}/{self.session_id}: {st}")
+                logger.info(f"📊 [GUI] Remote status for {self.email}/{self.session_id}: {st}")
                 if st in ("finished", "kicked"):
+                    logger.info(f"🚨 [GUI] Session kicked/finished detected! Status: {st}")
                     return True
 
             if hasattr(api, "get_all_active_sessions"):
@@ -336,10 +338,10 @@ class EmployeeApp(QWidget):
                         last_for_email = s
                 if last_for_email:
                     st2 = str(last_for_email.get("Status", "")).strip().lower()
-                    logger.debug(f"[ACTIVESESSIONS] fallback status for {self.email}: {st2}")
+                    logger.info(f"📊 [GUI] Fallback status for {self.email}: {st2}")
                     return st2 in ("finished", "kicked")
         except Exception as e:
-            logger.debug(f"_is_session_finished_remote error: {e}")
+            logger.error(f"_is_session_finished_remote error: {e}")
         return False
 
     def _is_shift_ended(self) -> bool:

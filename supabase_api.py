@@ -329,6 +329,8 @@ class SupabaseAPI:
     def set_active_session(self, email: str, name: str, session_id: str, login_time: str):
         """Записать активную сессию (алиас для start_session)"""
         try:
+            logger.info(f"📝 Creating session: email={email}, session_id={session_id}")
+
             user = self.client.table('users').select('id').eq('email', email.lower()).execute()
             user_id = user.data[0]['id'] if user.data else None
 
@@ -340,8 +342,8 @@ class SupabaseAPI:
                 'status': 'active'
             }
 
-            self.client.table('work_sessions').insert(data).execute()
-            logger.info(f"✅ Active session set for {email}")
+            result = self.client.table('work_sessions').insert(data).execute()
+            logger.info(f"✅ Active session created for {email}: session_id={session_id}, db_id={result.data[0].get('id') if result.data else 'unknown'}")
         except Exception as e:
             logger.error(f"Failed to set active session for {email}: {e}")
 
@@ -373,20 +375,45 @@ class SupabaseAPI:
     def check_user_session_status(self, email: str, session_id: str) -> str:
         """Проверить статус сессии пользователя"""
         try:
+            logger.debug(f"🔍 Checking session status: email={email}, session_id={session_id}")
+
+            # Сначала пробуем найти по session_id
             response = self.client.table('work_sessions')\
-                .select('status')\
+                .select('id, session_id, email, status, login_time')\
                 .eq('session_id', session_id)\
                 .limit(1)\
                 .execute()
 
             if response.data:
-                status = response.data[0].get('status', 'unknown')
+                row = response.data[0]
+                status = row.get('status', 'unknown')
+                logger.info(f"📊 Session found by session_id: id={row.get('id')}, status={status}, email={row.get('email')}")
                 if status in ('kicked', 'finished'):
                     logger.info(f"🚨 Session {session_id} has status: {status}")
                 return status
+
+            # Если не нашли по session_id, пробуем по email (последняя активная)
+            logger.warning(f"⚠️ No session found for session_id={session_id}, trying by email={email}")
+
+            response2 = self.client.table('work_sessions')\
+                .select('id, session_id, email, status, login_time')\
+                .eq('email', email.lower())\
+                .order('login_time', desc=True)\
+                .limit(1)\
+                .execute()
+
+            if response2.data:
+                row = response2.data[0]
+                status = row.get('status', 'unknown')
+                logger.info(f"📊 Session found by email: id={row.get('id')}, session_id={row.get('session_id')}, status={status}")
+                if status in ('kicked', 'finished'):
+                    logger.info(f"🚨 Session for {email} has status: {status}")
+                return status
+
+            logger.warning(f"❌ No session found for email={email} at all")
             return 'unknown'
         except Exception as e:
-            logger.error(f"Failed to check session status: {e}")
+            logger.error(f"Failed to check session status for {email}/{session_id}: {e}")
             return 'unknown'
 
     def kick_active_session(self, email: str, logout_time: str = None) -> bool:
