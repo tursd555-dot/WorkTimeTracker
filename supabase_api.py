@@ -226,6 +226,29 @@ class SupabaseAPI:
                         logger.debug(f"Could not find schedule name for UUID {row.get('schedule_id')}: {e}")
                         formatted_row['ScheduleID'] = row.get('schedule_id', '')
                 
+                # Специальная обработка для break_schedules: парсим JSON из description ПОСЛЕ заполнения всех полей
+                if table_name == "break_schedules":
+                    description_value = formatted_row.get('Description') or row.get('description')
+                    if description_value:
+                        try:
+                            import json
+                            slot_info = json.loads(description_value)
+                            logger.debug(f"Parsed slot info from description: {slot_info}")
+                            # Добавляем поля слота из JSON, если их еще нет
+                            if 'slot_type' in slot_info and not formatted_row.get('SlotType'):
+                                formatted_row['SlotType'] = slot_info['slot_type']
+                            if 'duration' in slot_info and not formatted_row.get('Duration'):
+                                formatted_row['Duration'] = str(slot_info['duration'])
+                            if 'window_start' in slot_info and not formatted_row.get('WindowStart'):
+                                formatted_row['WindowStart'] = slot_info['window_start']
+                            if 'window_end' in slot_info and not formatted_row.get('WindowEnd'):
+                                formatted_row['WindowEnd'] = slot_info['window_end']
+                            if 'priority' in slot_info and not formatted_row.get('Order'):
+                                formatted_row['Order'] = str(slot_info['priority'])
+                        except (json.JSONDecodeError, KeyError, TypeError) as e:
+                            # Если description не JSON или не содержит данных слота, это основная запись шаблона
+                            logger.debug(f"Could not parse slot info from description '{description_value}': {e}")
+                
                 rows.append(formatted_row)
                 logger.debug(f"Formatted row: {formatted_row}")
             
