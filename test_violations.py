@@ -69,12 +69,22 @@ def test_violations():
             if violations:
                 print(f"   📋 Нарушения:")
                 for idx, v in enumerate(violations[:5], 1):  # Показываем первые 5
+                    ts = v.get('Timestamp', '')
+                    date_part = ts[:10] if ts else 'N/A'
                     print(f"      {idx}. Email: {v.get('Email')}, "
                           f"Тип: {v.get('ViolationType')}, "
-                          f"Время: {v.get('Timestamp')}, "
+                          f"Время: {ts}, "
+                          f"Дата: {date_part}, "
                           f"Детали: {v.get('Details', '')[:50]}")
             else:
                 print(f"   ⚠️  Нарушений не найдено")
+                # Показываем все нарушения для диагностики
+                all_v = break_mgr.get_violations_report()
+                print(f"   📋 Диагностика: Всего нарушений: {len(all_v)}")
+                for v in all_v[:3]:
+                    ts = v.get('Timestamp', '')
+                    date_part = ts[:10] if ts else 'N/A'
+                    print(f"      - Дата: {date_part}, Email: {v.get('Email')}, Тип: {v.get('ViolationType')}")
             print()
         except Exception as e:
             print(f"   ❌ Ошибка при получении нарушений: {e}")

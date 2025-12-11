@@ -1206,23 +1206,23 @@ class BreakManager:
             if email:
                 filtered = [r for r in filtered if r.get("Email", "").lower() == email.lower()]
             
+            def extract_date(ts_str):
+                """Извлекает дату из timestamp в формате YYYY-MM-DD"""
+                if not ts_str:
+                    return ""
+                ts_str = str(ts_str)
+                # ISO формат: 2025-12-11T14:30:00+00:00 или 2025-12-11T14:30:00
+                # Обычный формат: 2025-12-11 14:30:00
+                if 'T' in ts_str:
+                    return ts_str.split('T')[0][:10]
+                elif ' ' in ts_str:
+                    return ts_str.split(' ')[0][:10]
+                else:
+                    return ts_str[:10]
+            
             if date_from:
                 # Для дат без времени сравниваем первые 10 символов
                 if len(date_from) == 10:  # Формат YYYY-MM-DD
-                    def extract_date(ts_str):
-                        """Извлекает дату из timestamp в формате YYYY-MM-DD"""
-                        if not ts_str:
-                            return ""
-                        ts_str = str(ts_str)
-                        # ISO формат: 2025-12-11T14:30:00+00:00 или 2025-12-11T14:30:00
-                        # Обычный формат: 2025-12-11 14:30:00
-                        if 'T' in ts_str:
-                            return ts_str.split('T')[0][:10]
-                        elif ' ' in ts_str:
-                            return ts_str.split(' ')[0][:10]
-                        else:
-                            return ts_str[:10]
-                    
                     filtered = [r for r in filtered 
                                if r.get("Timestamp") and extract_date(r.get("Timestamp", "")) >= date_from]
                 else:
@@ -1231,20 +1231,7 @@ class BreakManager:
             if date_to:
                 # Для date_to используем <= только если указано время
                 if len(date_to) == 10:  # Формат YYYY-MM-DD
-                    def extract_date(ts_str):
-                        """Извлекает дату из timestamp в формате YYYY-MM-DD"""
-                        if not ts_str:
-                            return ""
-                        ts_str = str(ts_str)
-                        # ISO формат: 2025-12-11T14:30:00+00:00 или 2025-12-11T14:30:00
-                        # Обычный формат: 2025-12-11 14:30:00
-                        if 'T' in ts_str:
-                            return ts_str.split('T')[0][:10]
-                        elif ' ' in ts_str:
-                            return ts_str.split(' ')[0][:10]
-                        else:
-                            return ts_str[:10]
-                    
+                    # Включаем весь день - сравниваем первые 10 символов
                     filtered = [r for r in filtered 
                                if r.get("Timestamp") and extract_date(r.get("Timestamp", "")) <= date_to]
                 else:
