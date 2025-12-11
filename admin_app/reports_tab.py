@@ -477,7 +477,16 @@ class ReportsTab(QWidget):
             # Вычисляем длительность до следующей записи или до конца периода
             if i < len(sorted_logs) - 1:
                 next_timestamp_str = sorted_logs[i + 1].get('timestamp', '')
-                if next_timestamp_str:
+                next_status = sorted_logs[i + 1].get('status', '')
+                next_session_id = sorted_logs[i + 1].get('session_id', '')
+                
+                # Если следующая запись из другой сессии, не считаем время до неё
+                # Но только если обе сессии определены и они разные
+                if (next_session_id and session_id and 
+                    next_session_id != session_id and 
+                    next_session_id.strip() and session_id.strip()):
+                    duration = 60  # По умолчанию 1 минута для конца сессии
+                elif next_timestamp_str:
                     try:
                         clean_next = next_timestamp_str.replace('Z', '+00:00')
                         if 'T' in clean_next:
@@ -489,19 +498,33 @@ class ReportsTab(QWidget):
                         
                         duration = (next_dt - dt).total_seconds()
                         
-                        # Проверка на разумность (от 1 секунды до 8 часов)
+                        # Проверка на разумность (от 1 секунды до 2 часов)
+                        # Если промежуток больше 2 часов, вероятно это разрыв между сессиями
                         if duration < 1:
                             duration = 1  # Минимум 1 секунда
-                        elif duration > 28800:  # 8 часов
-                            duration = 60  # По умолчанию 1 минута для подозрительных записей
+                        elif duration > 7200:  # 2 часа - вероятно разрыв между сессиями
+                            duration = 60  # По умолчанию 1 минута для разрыва между сессиями
                     except Exception as e:
                         logger.warning(f"Failed to parse next timestamp '{next_timestamp_str}': {e}")
                         duration = 60  # По умолчанию 1 минута
                 else:
                     duration = 60  # По умолчанию 1 минута
             else:
-                # Последняя запись - по умолчанию 1 минута
-                duration = 60
+                # Последняя запись - проверяем, насколько давно она была
+                try:
+                    now = datetime.now(dt.tzinfo) if dt.tzinfo else datetime.now()
+                    time_since_last = (now - dt).total_seconds()
+                    
+                    # Если последняя запись была недавно (менее 2 часов назад), считаем это время
+                    # Иначе считаем только 1 минуту
+                    if time_since_last < 7200:  # 2 часа
+                        duration = min(time_since_last, 7200)  # Но не более 2 часов
+                        if duration < 1:
+                            duration = 1
+                    else:
+                        duration = 60  # Если запись старая, считаем только 1 минуту
+                except Exception:
+                    duration = 60  # По умолчанию 1 минута
             
             # Добавляем время к статусу
             result['statuses'][status] += duration
