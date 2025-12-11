@@ -127,16 +127,22 @@ class SupabaseAPI:
                 # Преобразуем ключи в заглавные для совместимости
                 formatted_row = {}
                 for key, value in row.items():
-                    # Преобразуем snake_case в PascalCase
-                    # schedule_id -> ScheduleId, но нужно ScheduleID
-                    # Используем специальный маппинг для известных полей
+                    # Специальный маппинг для известных полей break_schedules
                     key_mapping = {
-                        'schedule_id': 'ScheduleID',
+                        'id': 'ScheduleID',  # Используем id как ScheduleID
+                        'name': 'Name',
                         'shift_start': 'ShiftStart',
                         'shift_end': 'ShiftEnd',
                         'slot_type': 'SlotType',
                         'window_start': 'WindowStart',
                         'window_end': 'WindowEnd',
+                        'duration': 'Duration',
+                        'priority': 'Order',
+                        'description': 'Description',
+                        'is_active': 'IsActive',
+                        'created_by': 'CreatedBy',
+                        'created_at': 'CreatedAt',
+                        'updated_at': 'UpdatedAt',
                     }
                     pascal_key = key_mapping.get(key)
                     if not pascal_key:

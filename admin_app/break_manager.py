@@ -251,10 +251,13 @@ class BreakManager:
             ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
             rows = self.sheets._read_table(ws)
             
-            # Группируем по schedule_id
+            # Группируем по schedule_id (может быть UUID или строка)
             schedules = {}
             for row in rows:
-                sid = row.get("ScheduleID", "").strip()
+                # Пробуем разные варианты ключей для schedule_id
+                sid = row.get("ScheduleID") or row.get("Id") or row.get("id")
+                if sid:
+                    sid = str(sid).strip()
                 if not sid:
                     continue
                 
@@ -262,8 +265,8 @@ class BreakManager:
                     schedules[sid] = {
                         "schedule_id": sid,
                         "name": row.get("Name", ""),
-                        "shift_start": row.get("ShiftStart", ""),
-                        "shift_end": row.get("ShiftEnd", "")
+                        "shift_start": row.get("ShiftStart", "") or "",
+                        "shift_end": row.get("ShiftEnd", "") or ""
                     }
             
             return list(schedules.values())
