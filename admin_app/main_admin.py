@@ -38,6 +38,7 @@ from admin_app.notifications_panel import open_panel as open_notifications_panel
 # --- Менеджер перерывов ---
 from admin_app.break_manager import BreakManager
 from admin_app.break_analytics_tab import BreakAnalyticsTab
+from admin_app.realtime_monitor import RealtimeMonitorTab
 from shared.time_utils import format_datetime_moscow
 
 # Инициализация логирования до запуска GUI (совместимо и со старой сигнатурой)
@@ -277,6 +278,10 @@ class AdminWindow(QMainWindow):
 
         breaks_layout.addWidget(self.breaks_tabs)
         self.tabs.addTab(self.tab_breaks, "Перерывы")
+
+        # --- Вкладка "Мониторинг" ---
+        self.tab_monitor = RealtimeMonitorTab(self.repo, self.break_mgr, self)
+        self.tabs.addTab(self.tab_monitor, "📺 Мониторинг")
 
         # --- Вкладка "Отчеты" ---
         from admin_app.reports_tab import ReportsTab
