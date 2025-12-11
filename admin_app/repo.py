@@ -288,6 +288,48 @@ class AdminRepo:
                 response = query.execute()
                 data = response.data or []
                 
+                # Дополнительная фильтрация по дате на уровне Python для гарантии корректности
+                # (на случай проблем с часовыми поясами в запросе к базе)
+                if date_from or date_to:
+                    filtered_by_date = []
+                    for r in data:
+                        timestamp_str = r.get('timestamp', '')
+                        if not timestamp_str:
+                            continue
+                        
+                        try:
+                            # Парсим timestamp
+                            if 'T' in timestamp_str:
+                                # ISO формат
+                                clean_ts = timestamp_str.replace('Z', '+00:00')
+                                if '+' not in clean_ts and '-' in clean_ts[-6:]:
+                                    clean_ts = clean_ts + '+00:00'
+                                dt = datetime.fromisoformat(clean_ts)
+                            else:
+                                dt = datetime.strptime(timestamp_str[:19], '%Y-%m-%d %H:%M:%S')
+                            
+                            entry_date = dt.date()
+                            
+                            # Проверяем соответствие фильтрам
+                            if date_from:
+                                filter_from = datetime.strptime(date_from, '%Y-%m-%d').date()
+                                if entry_date < filter_from:
+                                    continue
+                            
+                            if date_to:
+                                filter_to = datetime.strptime(date_to, '%Y-%m-%d').date()
+                                if entry_date > filter_to:
+                                    continue
+                            
+                            filtered_by_date.append(r)
+                        except Exception as e:
+                            logger.warning(f"Failed to parse timestamp '{timestamp_str}' for date filtering: {e}")
+                            # Включаем запись, если не удалось распарсить (на случай проблем с форматом)
+                            filtered_by_date.append(r)
+                    
+                    data = filtered_by_date
+                    logger.debug(f"After Python date filtering: {len(data)} records")
+                
                 # Фильтр по группе (если указан)
                 if group and group != "Все группы":
                     users = self.list_users()
