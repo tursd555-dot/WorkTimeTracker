@@ -1,0 +1,639 @@
+# admin_app/reports_tab.py
+"""
+Вкладка отчетов системы учета рабочего времени
+
+Реализует:
+- Отчет по сотрудникам
+- Отчет по группам
+- Отчет по типам статусов
+- Отчет по продуктивным статусам
+- Отчет по нарушениям
+- Отчет по перерывам
+- Сравнительный отчет
+- Отчет по сессиям работы
+"""
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
+    QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox,
+    QDateEdit, QComboBox, QLineEdit, QSplitter, QFrame,
+    QMessageBox, QFileDialog, QTabWidget, QCheckBox, QSpinBox,
+    QProgressBar, QTextEdit
+)
+from PyQt5.QtCore import Qt, QDate, QThread, pyqtSignal
+from PyQt5.QtGui import QFont, QColor
+from datetime import datetime, timedelta, date
+from typing import List, Dict, Optional
+import logging
+import json
+
+logger = logging.getLogger(__name__)
+
+
+class ReportsTab(QWidget):
+    """Вкладка отчетов"""
+    
+    def __init__(self, repo, break_manager, parent=None):
+        super().__init__(parent)
+        self.repo = repo
+        self.break_mgr = break_manager
+        self.current_data = []
+        self._setup_ui()
+        
+        # Начальная загрузка
+        self._load_initial_data()
+    
+    def _setup_ui(self):
+        """Создаёт интерфейс"""
+        layout = QVBoxLayout(self)
+        
+        # Заголовок
+        header = QLabel("📊 Система отчетов")
+        header_font = QFont()
+        header_font.setPointSize(16)
+        header_font.setBold(True)
+        header.setFont(header_font)
+        layout.addWidget(header)
+        
+        # Разделитель
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(line)
+        
+        # Панель фильтров
+        filters_group = self._build_filters()
+        layout.addWidget(filters_group)
+        
+        # Вкладки с отчетами
+        self.reports_tabs = QTabWidget()
+        self._build_report_tabs()
+        layout.addWidget(self.reports_tabs)
+        
+        # Панель действий
+        actions_group = self._build_actions()
+        layout.addWidget(actions_group)
+    
+    def _build_filters(self) -> QGroupBox:
+        """Создаёт панель фильтров"""
+        group = QGroupBox("Фильтры")
+        layout = QVBoxLayout()
+        
+        # Первая строка: период
+        period_layout = QHBoxLayout()
+        period_layout.addWidget(QLabel("Период:"))
+        
+        self.date_from = QDateEdit()
+        self.date_from.setCalendarPopup(True)
+        self.date_from.setDate(QDate.currentDate().addDays(-7))  # По умолчанию последние 7 дней
+        period_layout.addWidget(self.date_from)
+        
+        period_layout.addWidget(QLabel("—"))
+        
+        self.date_to = QDateEdit()
+        self.date_to.setCalendarPopup(True)
+        self.date_to.setDate(QDate.currentDate())
+        period_layout.addWidget(self.date_to)
+        
+        # Быстрые периоды
+        btn_today = QPushButton("Сегодня")
+        btn_today.clicked.connect(lambda: self._set_period_today())
+        period_layout.addWidget(btn_today)
+        
+        btn_week = QPushButton("Неделя")
+        btn_week.clicked.connect(lambda: self._set_period_week())
+        period_layout.addWidget(btn_week)
+        
+        btn_month = QPushButton("Месяц")
+        btn_month.clicked.connect(lambda: self._set_period_month())
+        period_layout.addWidget(btn_month)
+        
+        period_layout.addStretch()
+        layout.addLayout(period_layout)
+        
+        # Вторая строка: сотрудники и группы
+        users_groups_layout = QHBoxLayout()
+        users_groups_layout.addWidget(QLabel("Сотрудники:"))
+        
+        self.users_combo = QComboBox()
+        self.users_combo.setEditable(True)
+        self.users_combo.addItem("Все сотрудники")
+        self.users_combo.setInsertPolicy(QComboBox.NoInsert)
+        users_groups_layout.addWidget(self.users_combo)
+        
+        users_groups_layout.addWidget(QLabel("Группы:"))
+        
+        self.groups_combo = QComboBox()
+        self.groups_combo.setEditable(True)
+        self.groups_combo.addItem("Все группы")
+        self.groups_combo.setInsertPolicy(QComboBox.NoInsert)
+        users_groups_layout.addWidget(self.groups_combo)
+        
+        users_groups_layout.addStretch()
+        layout.addLayout(users_groups_layout)
+        
+        # Третья строка: кнопка применения фильтров
+        apply_layout = QHBoxLayout()
+        apply_layout.addStretch()
+        
+        btn_apply = QPushButton("Применить фильтры")
+        btn_apply.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 5px 15px;")
+        btn_apply.clicked.connect(self._apply_filters)
+        apply_layout.addWidget(btn_apply)
+        
+        layout.addLayout(apply_layout)
+        
+        group.setLayout(layout)
+        return group
+    
+    def _build_report_tabs(self):
+        """Создаёт вкладки с отчетами"""
+        # Отчет по сотрудникам
+        self.employees_tab = self._build_employees_report()
+        self.reports_tabs.addTab(self.employees_tab, "👤 По сотрудникам")
+        
+        # Отчет по группам
+        self.groups_tab = self._build_groups_report()
+        self.reports_tabs.addTab(self.groups_tab, "👥 По группам")
+        
+        # Отчет по типам статусов
+        self.statuses_tab = self._build_statuses_report()
+        self.reports_tabs.addTab(self.statuses_tab, "📋 По статусам")
+        
+        # Отчет по продуктивным статусам
+        self.productivity_tab = self._build_productivity_report()
+        self.reports_tabs.addTab(self.productivity_tab, "⚡ Продуктивность")
+        
+        # Отчет по нарушениям
+        self.violations_tab = self._build_violations_report()
+        self.reports_tabs.addTab(self.violations_tab, "⚠️ Нарушения")
+        
+        # Отчет по перерывам
+        self.breaks_tab = self._build_breaks_report()
+        self.reports_tabs.addTab(self.breaks_tab, "☕ Перерывы")
+    
+    def _build_employees_report(self) -> QWidget:
+        """Создаёт отчет по сотрудникам"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Сводные карточки
+        cards_layout = QHBoxLayout()
+        
+        self.emp_total_time_card = self._create_metric_card("Общее время", "0:00")
+        cards_layout.addWidget(self.emp_total_time_card)
+        
+        self.emp_productive_card = self._create_metric_card("Продуктивное время", "0:00")
+        cards_layout.addWidget(self.emp_productive_card)
+        
+        self.emp_productivity_card = self._create_metric_card("Продуктивность", "0%")
+        cards_layout.addWidget(self.emp_productivity_card)
+        
+        self.emp_sessions_card = self._create_metric_card("Сессий", "0")
+        cards_layout.addWidget(self.emp_sessions_card)
+        
+        layout.addLayout(cards_layout)
+        
+        # Таблица
+        self.employees_table = QTableWidget()
+        self.employees_table.setColumnCount(8)
+        self.employees_table.setHorizontalHeaderLabels([
+            "Сотрудник", "Группа", "Общее время", "Продуктивное время",
+            "Продуктивность", "Сессий", "Нарушений", "Детали"
+        ])
+        self.employees_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.employees_table.setAlternatingRowColors(True)
+        layout.addWidget(self.employees_table)
+        
+        return widget
+    
+    def _build_groups_report(self) -> QWidget:
+        """Создаёт отчет по группам"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Сводные карточки
+        cards_layout = QHBoxLayout()
+        
+        self.grp_total_time_card = self._create_metric_card("Общее время", "0:00")
+        cards_layout.addWidget(self.grp_total_time_card)
+        
+        self.grp_avg_time_card = self._create_metric_card("Среднее время", "0:00")
+        cards_layout.addWidget(self.grp_avg_time_card)
+        
+        self.grp_productivity_card = self._create_metric_card("Продуктивность", "0%")
+        cards_layout.addWidget(self.grp_productivity_card)
+        
+        self.grp_violations_card = self._create_metric_card("Нарушений", "0")
+        cards_layout.addWidget(self.grp_violations_card)
+        
+        layout.addLayout(cards_layout)
+        
+        # Таблица
+        self.groups_table = QTableWidget()
+        self.groups_table.setColumnCount(7)
+        self.groups_table.setHorizontalHeaderLabels([
+            "Группа", "Сотрудников", "Общее время", "Среднее время",
+            "Продуктивность", "Нарушений", "Детали"
+        ])
+        self.groups_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.groups_table.setAlternatingRowColors(True)
+        layout.addWidget(self.groups_table)
+        
+        return widget
+    
+    def _build_statuses_report(self) -> QWidget:
+        """Создаёт отчет по типам статусов"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Таблица
+        self.statuses_table = QTableWidget()
+        self.statuses_table.setColumnCount(6)
+        self.statuses_table.setHorizontalHeaderLabels([
+            "Статус", "Время", "Процент", "Переходов", "Средняя длительность", "Сотрудников"
+        ])
+        self.statuses_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.statuses_table.setAlternatingRowColors(True)
+        layout.addWidget(self.statuses_table)
+        
+        return widget
+    
+    def _build_productivity_report(self) -> QWidget:
+        """Создаёт отчет по продуктивным статусам"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Сводные карточки
+        cards_layout = QHBoxLayout()
+        
+        self.prod_total_card = self._create_metric_card("Продуктивное время", "0:00")
+        cards_layout.addWidget(self.prod_total_card)
+        
+        self.prod_percent_card = self._create_metric_card("Процент", "0%")
+        cards_layout.addWidget(self.prod_percent_card)
+        
+        self.prod_avg_card = self._create_metric_card("Среднее на сотрудника", "0:00")
+        cards_layout.addWidget(self.prod_avg_card)
+        
+        self.prod_sessions_card = self._create_metric_card("Сессий", "0")
+        cards_layout.addWidget(self.prod_sessions_card)
+        
+        layout.addLayout(cards_layout)
+        
+        # Таблица топ сотрудников
+        top_label = QLabel("Топ-10 сотрудников по продуктивности:")
+        top_label.setFont(QFont("Arial", 10, QFont.Bold))
+        layout.addWidget(top_label)
+        
+        self.productivity_table = QTableWidget()
+        self.productivity_table.setColumnCount(5)
+        self.productivity_table.setHorizontalHeaderLabels([
+            "Сотрудник", "Группа", "Продуктивное время", "Процент", "Сессий"
+        ])
+        self.productivity_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.productivity_table.setAlternatingRowColors(True)
+        layout.addWidget(self.productivity_table)
+        
+        return widget
+    
+    def _build_violations_report(self) -> QWidget:
+        """Создаёт отчет по нарушениям"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Сводные карточки
+        cards_layout = QHBoxLayout()
+        
+        self.viol_total_card = self._create_metric_card("Всего нарушений", "0")
+        cards_layout.addWidget(self.viol_total_card)
+        
+        self.viol_out_window_card = self._create_metric_card("Вне окна", "0")
+        cards_layout.addWidget(self.viol_out_window_card)
+        
+        self.viol_over_limit_card = self._create_metric_card("Превышение лимита", "0")
+        cards_layout.addWidget(self.viol_over_limit_card)
+        
+        self.viol_quota_card = self._create_metric_card("Превышение квоты", "0")
+        cards_layout.addWidget(self.viol_quota_card)
+        
+        layout.addLayout(cards_layout)
+        
+        # Таблица топ нарушителей
+        top_label = QLabel("Топ-10 нарушителей:")
+        top_label.setFont(QFont("Arial", 10, QFont.Bold))
+        layout.addWidget(top_label)
+        
+        self.violations_table = QTableWidget()
+        self.violations_table.setColumnCount(5)
+        self.violations_table.setHorizontalHeaderLabels([
+            "Сотрудник", "Группа", "Всего нарушений", "Типы нарушений", "Детали"
+        ])
+        self.violations_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.violations_table.setAlternatingRowColors(True)
+        layout.addWidget(self.violations_table)
+        
+        return widget
+    
+    def _build_breaks_report(self) -> QWidget:
+        """Создаёт отчет по перерывам"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Сводные карточки
+        cards_layout = QHBoxLayout()
+        
+        self.brk_total_card = self._create_metric_card("Всего перерывов", "0")
+        cards_layout.addWidget(self.brk_total_card)
+        
+        self.brk_time_card = self._create_metric_card("Время в перерывах", "0:00")
+        cards_layout.addWidget(self.brk_time_card)
+        
+        self.brk_avg_card = self._create_metric_card("Средняя длительность", "0:00")
+        cards_layout.addWidget(self.brk_avg_card)
+        
+        self.brk_in_schedule_card = self._create_metric_card("В рамках графика", "0%")
+        cards_layout.addWidget(self.brk_in_schedule_card)
+        
+        layout.addLayout(cards_layout)
+        
+        # Таблица
+        self.breaks_table = QTableWidget()
+        self.breaks_table.setColumnCount(6)
+        self.breaks_table.setHorizontalHeaderLabels([
+            "Сотрудник", "Группа", "Перерывов", "Время", "В рамках графика", "Детали"
+        ])
+        self.breaks_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.breaks_table.setAlternatingRowColors(True)
+        layout.addWidget(self.breaks_table)
+        
+        return widget
+    
+    def _build_actions(self) -> QGroupBox:
+        """Создаёт панель действий"""
+        group = QGroupBox("Действия")
+        layout = QHBoxLayout()
+        
+        btn_refresh = QPushButton("🔄 Обновить")
+        btn_refresh.clicked.connect(self._apply_filters)
+        layout.addWidget(btn_refresh)
+        
+        btn_export_excel = QPushButton("📥 Экспорт в Excel")
+        btn_export_excel.clicked.connect(self._export_to_excel)
+        layout.addWidget(btn_export_excel)
+        
+        btn_export_pdf = QPushButton("📄 Экспорт в PDF")
+        btn_export_pdf.clicked.connect(self._export_to_pdf)
+        layout.addWidget(btn_export_pdf)
+        
+        layout.addStretch()
+        
+        group.setLayout(layout)
+        return group
+    
+    def _create_metric_card(self, title: str, value: str) -> QGroupBox:
+        """Создаёт карточку с метрикой"""
+        card = QGroupBox(title)
+        card_layout = QVBoxLayout()
+        
+        value_label = QLabel(value)
+        value_font = QFont()
+        value_font.setPointSize(20)
+        value_font.setBold(True)
+        value_label.setFont(value_font)
+        value_label.setAlignment(Qt.AlignCenter)
+        card_layout.addWidget(value_label)
+        
+        card.setLayout(card_layout)
+        card.setMinimumHeight(80)
+        return card
+    
+    def _load_initial_data(self):
+        """Загружает начальные данные (списки сотрудников и групп)"""
+        try:
+            # Загружаем сотрудников
+            users = self.repo.list_users()
+            for user in users:
+                email = user.get("Email", "")
+                name = user.get("Name", "")
+                if email:
+                    display_text = f"{name} ({email})" if name else email
+                    self.users_combo.addItem(display_text)
+            
+            # Загружаем группы
+            groups = self.repo.list_groups_from_sheet()
+            for group in groups:
+                if group:
+                    self.groups_combo.addItem(group)
+        except Exception as e:
+            logger.error(f"Failed to load initial data: {e}")
+    
+    def _set_period_today(self):
+        """Устанавливает период на сегодня"""
+        today = QDate.currentDate()
+        self.date_from.setDate(today)
+        self.date_to.setDate(today)
+    
+    def _set_period_week(self):
+        """Устанавливает период на последние 7 дней"""
+        today = QDate.currentDate()
+        self.date_from.setDate(today.addDays(-7))
+        self.date_to.setDate(today)
+    
+    def _set_period_month(self):
+        """Устанавливает период на текущий месяц"""
+        today = QDate.currentDate()
+        self.date_from.setDate(QDate(today.year(), today.month(), 1))
+        self.date_to.setDate(today)
+    
+    def _apply_filters(self):
+        """Применяет фильтры и обновляет все отчеты"""
+        try:
+            date_from = self.date_from.date().toPyDate().isoformat()
+            date_to = self.date_to.date().toPyDate().isoformat()
+            
+            selected_user = self.users_combo.currentText()
+            selected_group = self.groups_combo.currentText()
+            
+            # Обновляем все отчеты
+            self._update_employees_report(date_from, date_to, selected_user, selected_group)
+            self._update_groups_report(date_from, date_to, selected_group)
+            self._update_statuses_report(date_from, date_to, selected_user, selected_group)
+            self._update_productivity_report(date_from, date_to, selected_user, selected_group)
+            self._update_violations_report(date_from, date_to, selected_user, selected_group)
+            self._update_breaks_report(date_from, date_to, selected_user, selected_group)
+            
+        except Exception as e:
+            logger.error(f"Failed to apply filters: {e}")
+            QMessageBox.warning(self, "Ошибка", f"Не удалось применить фильтры: {e}")
+    
+    def _update_employees_report(self, date_from: str, date_to: str, user_filter: str, group_filter: str):
+        """Обновляет отчет по сотрудникам"""
+        # TODO: Реализовать получение данных из базы
+        # Пока заглушка
+        self.employees_table.setRowCount(0)
+        self.emp_total_time_card.findChild(QLabel).setText("0:00")
+        self.emp_productive_card.findChild(QLabel).setText("0:00")
+        self.emp_productivity_card.findChild(QLabel).setText("0%")
+        self.emp_sessions_card.findChild(QLabel).setText("0")
+    
+    def _update_groups_report(self, date_from: str, date_to: str, group_filter: str):
+        """Обновляет отчет по группам"""
+        # TODO: Реализовать получение данных из базы
+        self.groups_table.setRowCount(0)
+        self.grp_total_time_card.findChild(QLabel).setText("0:00")
+        self.grp_avg_time_card.findChild(QLabel).setText("0:00")
+        self.grp_productivity_card.findChild(QLabel).setText("0%")
+        self.grp_violations_card.findChild(QLabel).setText("0")
+    
+    def _update_statuses_report(self, date_from: str, date_to: str, user_filter: str, group_filter: str):
+        """Обновляет отчет по типам статусов"""
+        # TODO: Реализовать получение данных из базы
+        self.statuses_table.setRowCount(0)
+    
+    def _update_productivity_report(self, date_from: str, date_to: str, user_filter: str, group_filter: str):
+        """Обновляет отчет по продуктивным статусам"""
+        # TODO: Реализовать получение данных из базы
+        self.productivity_table.setRowCount(0)
+        self.prod_total_card.findChild(QLabel).setText("0:00")
+        self.prod_percent_card.findChild(QLabel).setText("0%")
+        self.prod_avg_card.findChild(QLabel).setText("0:00")
+        self.prod_sessions_card.findChild(QLabel).setText("0")
+    
+    def _update_violations_report(self, date_from: str, date_to: str, user_filter: str, group_filter: str):
+        """Обновляет отчет по нарушениям"""
+        try:
+            violations = self.break_mgr.get_violations_report(
+                date_from=date_from,
+                date_to=date_to
+            )
+            
+            # Фильтруем по пользователю, если выбран
+            if user_filter and user_filter != "Все сотрудники":
+                # Извлекаем email из строки вида "Имя (email@example.com)"
+                email = user_filter.split("(")[-1].rstrip(")")
+                violations = [v for v in violations if v.get("Email", "").lower() == email.lower()]
+            
+            # Подсчитываем статистику
+            total = len(violations)
+            out_of_window = len([v for v in violations if v.get("ViolationType") == "OUT_OF_WINDOW"])
+            over_limit = len([v for v in violations if v.get("ViolationType") == "OVER_LIMIT"])
+            quota_exceeded = len([v for v in violations if v.get("ViolationType") == "QUOTA_EXCEEDED"])
+            
+            # Обновляем карточки
+            self.viol_total_card.findChild(QLabel).setText(str(total))
+            self.viol_out_window_card.findChild(QLabel).setText(str(out_of_window))
+            self.viol_over_limit_card.findChild(QLabel).setText(str(over_limit))
+            self.viol_quota_card.findChild(QLabel).setText(str(quota_exceeded))
+            
+            # Группируем по сотрудникам
+            violators = {}
+            for v in violations:
+                email = v.get("Email", "")
+                if email not in violators:
+                    violators[email] = {
+                        "email": email,
+                        "count": 0,
+                        "types": {}
+                    }
+                violators[email]["count"] += 1
+                v_type = v.get("ViolationType", "")
+                violators[email]["types"][v_type] = violators[email]["types"].get(v_type, 0) + 1
+            
+            # Сортируем по количеству нарушений
+            sorted_violators = sorted(violators.items(), key=lambda x: x[1]["count"], reverse=True)[:10]
+            
+            # Заполняем таблицу
+            self.violations_table.setRowCount(len(sorted_violators))
+            for row, (email, data) in enumerate(sorted_violators):
+                # Получаем имя пользователя
+                user = next((u for u in self.repo.list_users() if u.get("Email", "").lower() == email.lower()), None)
+                name = user.get("Name", "") if user else ""
+                group = user.get("Group", "") if user else ""
+                
+                types_str = ", ".join([f"{k}: {v}" for k, v in data["types"].items()])
+                
+                self.violations_table.setItem(row, 0, QTableWidgetItem(f"{name} ({email})" if name else email))
+                self.violations_table.setItem(row, 1, QTableWidgetItem(group))
+                self.violations_table.setItem(row, 2, QTableWidgetItem(str(data["count"])))
+                self.violations_table.setItem(row, 3, QTableWidgetItem(types_str))
+                
+                details_btn = QPushButton("Детали")
+                details_btn.clicked.connect(lambda checked, e=email: self._show_violations_details(e, date_from, date_to))
+                self.violations_table.setCellWidget(row, 4, details_btn)
+            
+        except Exception as e:
+            logger.error(f"Failed to update violations report: {e}")
+            QMessageBox.warning(self, "Ошибка", f"Не удалось обновить отчет по нарушениям: {e}")
+    
+    def _update_breaks_report(self, date_from: str, date_to: str, user_filter: str, group_filter: str):
+        """Обновляет отчет по перерывам"""
+        # TODO: Реализовать получение данных из базы
+        self.breaks_table.setRowCount(0)
+        self.brk_total_card.findChild(QLabel).setText("0")
+        self.brk_time_card.findChild(QLabel).setText("0:00")
+        self.brk_avg_card.findChild(QLabel).setText("0:00")
+        self.brk_in_schedule_card.findChild(QLabel).setText("0%")
+    
+    def _show_violations_details(self, email: str, date_from: str, date_to: str):
+        """Показывает детали нарушений для сотрудника"""
+        try:
+            violations = self.break_mgr.get_violations_report(
+                email=email,
+                date_from=date_from,
+                date_to=date_to
+            )
+            
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle(f"Нарушения: {email}")
+            dialog.setText(f"Найдено нарушений: {len(violations)}")
+            
+            details_text = "\n".join([
+                f"{v.get('Timestamp', '')[:19]}: {v.get('ViolationType', '')} - {v.get('Details', '')}"
+                for v in violations[:20]  # Показываем первые 20
+            ])
+            
+            if len(violations) > 20:
+                details_text += f"\n... и еще {len(violations) - 20} нарушений"
+            
+            dialog.setDetailedText(details_text)
+            dialog.exec_()
+        except Exception as e:
+            logger.error(f"Failed to show violations details: {e}")
+    
+    def _export_to_excel(self):
+        """Экспортирует текущий отчет в Excel"""
+        try:
+            current_tab = self.reports_tabs.currentIndex()
+            tab_name = self.reports_tabs.tabText(current_tab)
+            
+            filename, _ = QFileDialog.getSaveFileName(
+                self,
+                f"Экспорт отчета '{tab_name}'",
+                f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                "Excel Files (*.xlsx)"
+            )
+            
+            if filename:
+                QMessageBox.information(self, "Экспорт", f"Экспорт в Excel будет реализован в следующей версии.\nФайл: {filename}")
+        except Exception as e:
+            logger.error(f"Failed to export to Excel: {e}")
+            QMessageBox.warning(self, "Ошибка", f"Не удалось экспортировать: {e}")
+    
+    def _export_to_pdf(self):
+        """Экспортирует текущий отчет в PDF"""
+        try:
+            current_tab = self.reports_tabs.currentIndex()
+            tab_name = self.reports_tabs.tabText(current_tab)
+            
+            filename, _ = QFileDialog.getSaveFileName(
+                self,
+                f"Экспорт отчета '{tab_name}'",
+                f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                "PDF Files (*.pdf)"
+            )
+            
+            if filename:
+                QMessageBox.information(self, "Экспорт", f"Экспорт в PDF будет реализован в следующей версии.\nФайл: {filename}")
+        except Exception as e:
+            logger.error(f"Failed to export to PDF: {e}")
+            QMessageBox.warning(self, "Ошибка", f"Не удалось экспортировать: {e}")

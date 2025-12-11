@@ -278,11 +278,8 @@ class AdminWindow(QMainWindow):
         self.tabs.addTab(self.tab_breaks, "Перерывы")
 
         # --- Вкладка "Отчеты" ---
-        self.tab_reports = QWidget()
-        reports_layout = QVBoxLayout(self.tab_reports)
-        reports_layout.addWidget(QLabel("📊 Система отчетов"))
-        reports_layout.addWidget(QLabel("Функционал отчетов находится в разработке."))
-        reports_layout.addWidget(QLabel("Подробное описание доступно в файле REPORTS_FUNCTIONALITY.md"))
+        from admin_app.reports_tab import ReportsTab
+        self.tab_reports = ReportsTab(self.repo, self.break_mgr, self)
         self.tabs.addTab(self.tab_reports, "📊 Отчеты")
 
         self.setCentralWidget(self.tabs)
