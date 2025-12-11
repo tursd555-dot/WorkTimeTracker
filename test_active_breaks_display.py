@@ -9,7 +9,7 @@ from datetime import datetime, date
 # Добавляем корневую директорию в путь
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from api_adapter import get_api
+from api_adapter import get_sheets_api
 from admin_app.break_manager import BreakManager
 
 def test_active_breaks():
@@ -22,7 +22,7 @@ def test_active_breaks():
     try:
         # Инициализация API
         print("1. Инициализация API...")
-        api = get_api()
+        api = get_sheets_api()
         print(f"   ✅ API тип: {type(api).__name__}")
         print()
         
