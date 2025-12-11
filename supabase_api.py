@@ -136,23 +136,35 @@ class SupabaseAPI:
                 # Преобразуем ключи в заглавные для совместимости
                 formatted_row = {}
                 for key, value in row.items():
-                    # Специальный маппинг для известных полей break_schedules
-                    key_mapping = {
-                        'id': 'ScheduleID',  # Используем id как ScheduleID
-                        'name': 'Name',
-                        'shift_start': 'ShiftStart',
-                        'shift_end': 'ShiftEnd',
-                        'slot_type': 'SlotType',
-                        'window_start': 'WindowStart',
-                        'window_end': 'WindowEnd',
-                        'duration': 'Duration',
-                        'priority': 'Order',
-                        'description': 'Description',
-                        'is_active': 'IsActive',
-                        'created_by': 'CreatedBy',
-                        'created_at': 'CreatedAt',
-                        'updated_at': 'UpdatedAt',
-                    }
+                    # Специальный маппинг для известных полей разных таблиц
+                    key_mapping = {}
+                    if table_name == "break_schedules":
+                        key_mapping = {
+                            'id': 'ScheduleID',  # Используем id как ScheduleID
+                            'name': 'Name',
+                            'shift_start': 'ShiftStart',
+                            'shift_end': 'ShiftEnd',
+                            'slot_type': 'SlotType',
+                            'window_start': 'WindowStart',
+                            'window_end': 'WindowEnd',
+                            'duration': 'Duration',
+                            'priority': 'Order',
+                            'description': 'Description',
+                            'is_active': 'IsActive',
+                            'created_by': 'CreatedBy',
+                            'created_at': 'CreatedAt',
+                            'updated_at': 'UpdatedAt',
+                        }
+                    elif table_name == "user_break_assignments":
+                        key_mapping = {
+                            'id': 'Id',
+                            'email': 'Email',
+                            'schedule_id': 'ScheduleID',
+                            'effective_date': 'EffectiveDate',
+                            'assigned_by': 'AssignedBy',
+                            'created_at': 'CreatedAt',
+                            'updated_at': 'UpdatedAt',
+                        }
                     pascal_key = key_mapping.get(key)
                     if not pascal_key:
                         # Общий случай: snake_case -> PascalCase
@@ -187,8 +199,24 @@ class SupabaseAPI:
             True если успешно
         """
         try:
-            # Маппинг колонок для break_schedules
-            if table_name == "break_schedules":
+            # Маппинг колонок для разных таблиц
+            if table_name == "user_break_assignments":
+                # Формат: [email, schedule_id, effective_date, assigned_by]
+                if len(values) >= 4:
+                    data = {
+                        'email': str(values[0]).lower(),
+                        'schedule_id': str(values[1]),  # Может быть UUID или имя шаблона
+                        'effective_date': str(values[2]) if values[2] else None,
+                        'assigned_by': str(values[3]) if values[3] else None
+                    }
+                    logger.info(f"Inserting assignment into {table_name}: {data}")
+                    response = self.client.table(table_name).insert(data).execute()
+                    logger.info(f"Insert successful: {len(response.data)} rows inserted")
+                    return True
+                else:
+                    logger.error(f"Invalid values length: {len(values)}, expected 4")
+                    return False
+            elif table_name == "break_schedules":
                 # Формат: [schedule_id, name, shift_start, shift_end, break_type, time_minutes, window_start, window_end, priority]
                 # В Supabase структура другая: нужно создать запись в break_schedules и отдельную в break_schedule_slots
                 if len(values) >= 9:

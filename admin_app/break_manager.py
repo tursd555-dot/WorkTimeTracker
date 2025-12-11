@@ -361,31 +361,75 @@ class BreakManager:
             rows = self.sheets._read_table(ws)
             existing = next((r for r in rows if r.get("Email", "").lower() == email.lower()), None)
             
-            if existing:
-                # Обновляем существующее назначение
-                # Находим номер строки
-                all_values = ws.get_all_values()
-                for idx, row in enumerate(all_values[1:], start=2):
-                    if row and row[0].lower() == email.lower():
-                        # Обновляем строку
-                        ws.update(f"A{idx}:D{idx}", [[
-                            email,
-                            schedule_id,
-                            datetime.now().strftime("%Y-%m-%d"),
-                            admin_email
-                        ]])
-                        logger.info(f"Updated schedule assignment for {email}")
+            # Проверяем, является ли это Supabase API
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Для Supabase API используем прямое обновление/вставку
+                if existing:
+                    # Обновляем существующее назначение
+                    try:
+                        # Находим id записи по email
+                        find_response = self.sheets.client.table('user_break_assignments')\
+                            .select('id')\
+                            .eq('email', email.lower())\
+                            .execute()
+                        
+                        if find_response.data:
+                            assignment_id = find_response.data[0]['id']
+                            update_data = {
+                                'schedule_id': schedule_id,
+                                'effective_date': datetime.now().strftime("%Y-%m-%d"),
+                                'assigned_by': admin_email
+                            }
+                            self.sheets.client.table('user_break_assignments')\
+                                .update(update_data)\
+                                .eq('id', assignment_id)\
+                                .execute()
+                            logger.info(f"Updated schedule assignment for {email}")
+                            return True
+                    except Exception as e:
+                        logger.error(f"Failed to update assignment: {e}", exc_info=True)
+                        return False
+                else:
+                    # Создаём новое назначение через append_row (который теперь поддерживает user_break_assignments)
+                    result = ws.append_row([
+                        email,
+                        schedule_id,
+                        datetime.now().strftime("%Y-%m-%d"),
+                        admin_email
+                    ])
+                    if result:
+                        logger.info(f"Created schedule assignment for {email}")
                         return True
+                    else:
+                        logger.error(f"Failed to create assignment for {email}")
+                        return False
             else:
-                # Создаём новое назначение
-                ws.append_row([
-                    email,
-                    schedule_id,
-                    datetime.now().strftime("%Y-%m-%d"),
-                    admin_email
-                ])
-                logger.info(f"Created schedule assignment for {email}")
-                return True
+                # Старый код для Google Sheets
+                if existing:
+                    # Обновляем существующее назначение
+                    # Находим номер строки
+                    all_values = ws.get_all_values()
+                    for idx, row in enumerate(all_values[1:], start=2):
+                        if row and row[0].lower() == email.lower():
+                            # Обновляем строку
+                            ws.update(f"A{idx}:D{idx}", [[
+                                email,
+                                schedule_id,
+                                datetime.now().strftime("%Y-%m-%d"),
+                                admin_email
+                            ]])
+                            logger.info(f"Updated schedule assignment for {email}")
+                            return True
+                else:
+                    # Создаём новое назначение
+                    ws.append_row([
+                        email,
+                        schedule_id,
+                        datetime.now().strftime("%Y-%m-%d"),
+                        admin_email
+                    ])
+                    logger.info(f"Created schedule assignment for {email}")
+                    return True
             
             return False
             
