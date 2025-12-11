@@ -293,10 +293,17 @@ class BreakManager:
             rows = self.sheets._read_table(ws)
             
             # Группируем по schedule_id (может быть UUID или строка)
+            # Также группируем по name для Supabase (где name используется как идентификатор)
             schedules = {}
             for row in rows:
                 # Пробуем разные варианты ключей для schedule_id
                 sid = row.get("ScheduleID") or row.get("Id") or row.get("id")
+                name = row.get("Name", "")
+                
+                # Для Supabase используем name как идентификатор, если schedule_id нет
+                if not sid and name:
+                    sid = name
+                
                 if sid:
                     sid = str(sid).strip()
                 if not sid:
@@ -305,10 +312,27 @@ class BreakManager:
                 if sid not in schedules:
                     schedules[sid] = {
                         "schedule_id": sid,
-                        "name": row.get("Name", ""),
+                        "name": name,
                         "shift_start": row.get("ShiftStart", "") or "",
-                        "shift_end": row.get("ShiftEnd", "") or ""
+                        "shift_end": row.get("ShiftEnd", "") or "",
+                        "slots_data": []  # Инициализируем список слотов
                     }
+                
+                # Добавляем слот в список слотов шаблона
+                slot_type = row.get("SlotType") or row.get("slot_type") or ""
+                duration = row.get("Duration") or row.get("duration") or "15"
+                window_start = row.get("WindowStart") or row.get("window_start") or ""
+                window_end = row.get("WindowEnd") or row.get("window_end") or ""
+                order = row.get("Order") or row.get("priority") or row.get("order") or "1"
+                
+                if slot_type:  # Добавляем только если есть тип слота
+                    schedules[sid]["slots_data"].append({
+                        "order": str(order),
+                        "type": slot_type,
+                        "duration": str(duration),
+                        "window_start": window_start or "09:00",
+                        "window_end": window_end or "17:00"
+                    })
             
             return list(schedules.values())
             
