@@ -204,15 +204,37 @@ class BreakManagerSupabase:
             return None
 
     def list_schedules(self) -> List[Dict]:
-        """Возвращает список всех шаблонов"""
+        """Возвращает список всех шаблонов с их слотами"""
         try:
             schedules = self.api.get_break_schedules()
-            return [{
-                'schedule_id': s['id'],
-                'name': s.get('name', ''),
-                'shift_start': str(s.get('shift_start', '')),
-                'shift_end': str(s.get('shift_end', ''))
-            } for s in schedules]
+            result = []
+            for s in schedules:
+                schedule_id = s['id']
+                # Загружаем лимиты и конвертируем в slots_data
+                limits = self.api.get_break_limits(schedule_id)
+                slots_data = []
+                order = 1
+                for lim in limits:
+                    # Создаём слоты по количеству daily_count
+                    for _ in range(lim.get('daily_count', 1)):
+                        slots_data.append({
+                            'order': str(order),
+                            'slot_type': lim.get('break_type', 'Перерыв'),
+                            'type': lim.get('break_type', 'Перерыв'),
+                            'duration': str(lim.get('duration_minutes', 15)),
+                            'window_start': '09:00',
+                            'window_end': '18:00'
+                        })
+                        order += 1
+
+                result.append({
+                    'schedule_id': schedule_id,
+                    'name': s.get('name', ''),
+                    'shift_start': str(s.get('shift_start', ''))[:5],
+                    'shift_end': str(s.get('shift_end', ''))[:5],
+                    'slots_data': slots_data
+                })
+            return result
         except Exception as e:
             logger.error(f"Failed to list schedules: {e}")
             return []
@@ -616,8 +638,8 @@ class BreakManagerSupabase:
             limits_dict = {}
 
             for slot in slots_data:
-                slot_type = slot.get('slot_type', 'Перерыв')
-                duration = slot.get('duration', 15)
+                slot_type = slot.get('slot_type') or slot.get('type', 'Перерыв')
+                duration = int(slot.get('duration', 15))
 
                 if slot_type not in limits_dict:
                     limits_dict[slot_type] = {
