@@ -49,23 +49,29 @@ try:
                 print(f"\n2. ТЕСТ СОЗДАНИЯ НАЗНАЧЕНИЯ")
                 print("-" * 80)
                 test_data_variants = [
+                    # Вариант 1: только email и schedule_id (без optional полей)
                     {
                         'email': 'test@example.com',
-                        'schedule_id': 'TEST_SCHEDULE',
-                        'effective_date': '2025-12-11',
-                        'assigned_by': 'admin'
+                        'schedule_id': 'TEST_SCHEDULE'
                     },
+                    # Вариант 2: с user_email
                     {
                         'user_email': 'test@example.com',
-                        'break_schedule_id': 'TEST_SCHEDULE',
-                        'effective_date': '2025-12-11',
-                        'assigned_by': 'admin'
+                        'schedule_id': 'TEST_SCHEDULE'
                     },
+                    # Вариант 3: с schedule_name вместо schedule_id
                     {
                         'email': 'test@example.com',
-                        'schedule_name': 'TEST_SCHEDULE',
-                        'effective_date': '2025-12-11',
-                        'assigned_by': 'admin'
+                        'schedule_name': 'TEST_SCHEDULE'
+                    },
+                    # Вариант 4: с break_schedule_id
+                    {
+                        'email': 'test@example.com',
+                        'break_schedule_id': 'TEST_SCHEDULE'
+                    },
+                    # Вариант 5: минимальный вариант - только email
+                    {
+                        'email': 'test@example.com'
                     }
                 ]
                 

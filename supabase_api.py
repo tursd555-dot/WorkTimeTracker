@@ -202,34 +202,52 @@ class SupabaseAPI:
             # Маппинг колонок для разных таблиц
             if table_name == "user_break_assignments":
                 # Формат: [email, schedule_id, effective_date, assigned_by]
-                if len(values) >= 4:
+                # Но некоторые поля могут отсутствовать в таблице Supabase
+                if len(values) >= 2:
                     # Пробуем разные варианты названий полей в зависимости от структуры таблицы
                     email_val = str(values[0]).lower() if values[0] else None
-                    schedule_id_val = str(values[1]) if values[1] else None
-                    effective_date_val = str(values[2]) if values[2] else None
-                    assigned_by_val = str(values[3]) if values[3] else None
+                    schedule_id_val = str(values[1]) if len(values) > 1 and values[1] else None
+                    # effective_date и assigned_by могут отсутствовать в таблице
+                    effective_date_val = str(values[2]) if len(values) > 2 and values[2] else None
+                    assigned_by_val = str(values[3]) if len(values) > 3 and values[3] else None
                     
-                    # Пробуем разные варианты структуры данных
+                    # Пробуем разные варианты структуры данных (без optional полей)
                     data_variants = [
+                        # Вариант 1: только email и schedule_id (минимальный)
                         {
                             'email': email_val,
-                            'schedule_id': schedule_id_val,
-                            'effective_date': effective_date_val,
-                            'assigned_by': assigned_by_val
+                            'schedule_id': schedule_id_val
                         },
+                        # Вариант 2: с user_email
                         {
                             'user_email': email_val,
-                            'break_schedule_id': schedule_id_val,
-                            'effective_date': effective_date_val,
-                            'assigned_by': assigned_by_val
+                            'schedule_id': schedule_id_val
                         },
+                        # Вариант 3: с schedule_name вместо schedule_id
                         {
                             'email': email_val,
-                            'schedule_name': schedule_id_val,  # Если хранится имя, а не ID
-                            'effective_date': effective_date_val,
-                            'assigned_by': assigned_by_val
+                            'schedule_name': schedule_id_val
+                        },
+                        # Вариант 4: с break_schedule_id
+                        {
+                            'email': email_val,
+                            'break_schedule_id': schedule_id_val
                         }
                     ]
+                    
+                    # Если есть дополнительные поля, добавляем их к вариантам (но не все таблицы их поддерживают)
+                    if effective_date_val or assigned_by_val:
+                        # Добавляем варианты с optional полями только если они есть
+                        extended_variants = []
+                        for base_variant in data_variants:
+                            extended_variant = base_variant.copy()
+                            if effective_date_val:
+                                extended_variant['effective_date'] = effective_date_val
+                            if assigned_by_val:
+                                extended_variant['assigned_by'] = assigned_by_val
+                            extended_variants.append(extended_variant)
+                        # Добавляем расширенные варианты в начало (приоритет)
+                        data_variants = extended_variants + data_variants
                     
                     for data in data_variants:
                         try:
@@ -240,7 +258,7 @@ class SupabaseAPI:
                         except Exception as insert_error:
                             error_str = str(insert_error)
                             # Если ошибка из-за отсутствующего поля, пробуем следующий вариант
-                            if 'column' in error_str.lower() or 'field' in error_str.lower():
+                            if 'column' in error_str.lower() or 'field' in error_str.lower() or 'PGRST204' in error_str:
                                 logger.debug(f"Field mismatch, trying next variant: {insert_error}")
                                 continue
                             else:
@@ -250,7 +268,7 @@ class SupabaseAPI:
                     logger.error(f"Failed to insert assignment: all variants failed")
                     return False
                 else:
-                    logger.error(f"Invalid values length: {len(values)}, expected 4")
+                    logger.error(f"Invalid values length: {len(values)}, expected at least 2")
                     return False
             elif table_name == "break_schedules":
                 # Формат: [schedule_id, name, shift_start, shift_end, break_type, time_minutes, window_start, window_end, priority]
