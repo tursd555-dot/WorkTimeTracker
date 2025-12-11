@@ -207,6 +207,50 @@ class BreakManager:
         try:
             ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
             
+            # Проверяем, является ли это Supabase API
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Для Supabase: сначала создаем основную запись (если её нет), затем слоты
+                # Проверяем, существует ли уже шаблон с таким именем
+                existing = self.sheets.client.table('break_schedules')\
+                    .select('id, name, description')\
+                    .eq('name', name)\
+                    .execute()
+                
+                # Проверяем, есть ли основная запись (без description или с пустым description)
+                main_record = None
+                for record in existing.data:
+                    desc = record.get('description')
+                    if not desc or desc.strip() == '':
+                        main_record = record
+                        break
+                
+                # Если основной записи нет, создаем её
+                if not main_record:
+                    schedule_data = {
+                        'name': name,
+                        'shift_start': shift_start,
+                        'shift_end': shift_end,
+                        'is_active': True,
+                        'description': None  # Основная запись без description
+                    }
+                    schedule_response = self.sheets.client.table('break_schedules').insert(schedule_data).execute()
+                    if schedule_response.data:
+                        main_record = schedule_response.data[0]
+                        logger.info(f"Created main schedule record: {main_record['id']} for name '{name}'")
+                else:
+                    # Обновляем shift_start и shift_end основной записи, если они изменились
+                    update_data = {}
+                    if shift_start and main_record.get('shift_start') != shift_start:
+                        update_data['shift_start'] = shift_start
+                    if shift_end and main_record.get('shift_end') != shift_end:
+                        update_data['shift_end'] = shift_end
+                    if update_data:
+                        self.sheets.client.table('break_schedules')\
+                            .update(update_data)\
+                            .eq('id', main_record['id'])\
+                            .execute()
+                        logger.debug(f"Updated main schedule record: {update_data}")
+            
             # Формируем строки для записи
             rows = []
             

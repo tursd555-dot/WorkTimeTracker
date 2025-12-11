@@ -429,20 +429,9 @@ class SupabaseAPI:
                             break
                     
                     # Если основной записи нет, создаем её только при первом слоте
-                    if not main_record:
-                        # Создаём основную запись шаблона (без description)
-                        schedule_data = {
-                            'name': name,
-                            'shift_start': shift_start,
-                            'shift_end': shift_end,
-                            'is_active': True,
-                            'description': None  # Основная запись без description
-                        }
-                        schedule_response = self.client.table('break_schedules').insert(schedule_data).execute()
-                        if schedule_response.data:
-                            main_record = schedule_response.data[0]
-                            logger.info(f"Created main schedule record: {main_record['id']} for name '{name}'")
-                    else:
+                    # Но НЕ создаем её здесь - она будет создана отдельно перед всеми слотами
+                    # Здесь только проверяем и обновляем, если нужно
+                    if main_record:
                         # Обновляем shift_start и shift_end основной записи, если они изменились
                         update_data = {}
                         if shift_start and main_record.get('shift_start') != shift_start:
