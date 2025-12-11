@@ -484,16 +484,28 @@ class ReportsTab(QWidget):
                 date_to=date_to
             )
             
+            # Извлекаем email из фильтра, если там формат "Имя (email)"
+            email_filter = None
+            if user_filter and user_filter != "Все сотрудники":
+                if '(' in user_filter and ')' in user_filter:
+                    email_filter = user_filter.split('(')[-1].rstrip(')').lower().strip()
+                else:
+                    email_filter = user_filter.lower().strip()
+            
             # Группируем данные по сотрудникам
             employees_data = {}
             users = self.repo.list_users()
             users_dict = {u.get("Email", "").lower(): u for u in users}
             
+            # Группируем логи по email
+            logs_by_email = defaultdict(list)
             for log_entry in work_log_data:
                 email = log_entry.get('email', '').lower()
-                if not email:
-                    continue
-                
+                if email:
+                    logs_by_email[email].append(log_entry)
+            
+            # Обрабатываем каждого сотрудника
+            for email, logs in logs_by_email.items():
                 if email not in employees_data:
                     user = users_dict.get(email, {})
                     employees_data[email] = {
@@ -506,23 +518,12 @@ class ReportsTab(QWidget):
                         'productive_seconds': 0
                     }
                 
-                # Подсчитываем сессии
-                session_id = log_entry.get('session_id', '')
-                if session_id:
-                    employees_data[email]['sessions'].add(session_id)
-                
-                # Подсчитываем время по статусам
-                status = log_entry.get('status', '')
-                if status:
-                    if status not in employees_data[email]['statuses']:
-                        employees_data[email]['statuses'][status] = 0
-                    # Предполагаем, что каждая запись = 1 минута (нужно будет уточнить)
-                    employees_data[email]['statuses'][status] += 60
-                    employees_data[email]['total_seconds'] += 60
-                    
-                    # Продуктивные статусы
-                    if status in ['В работе', 'На задаче']:
-                        employees_data[email]['productive_seconds'] += 60
+                # Вычисляем время из логов
+                time_data = self._calculate_time_from_logs(logs)
+                employees_data[email]['total_seconds'] = time_data['total_seconds']
+                employees_data[email]['productive_seconds'] = time_data['productive_seconds']
+                employees_data[email]['statuses'] = dict(time_data['statuses'])
+                employees_data[email]['sessions'] = time_data['sessions']
             
             # Подсчитываем нарушения для каждого сотрудника
             violations_by_email = {}
