@@ -1469,6 +1469,51 @@ class BreakManager:
         except Exception as e:
             logger.error(f"Failed to get active breaks: {e}")
             return []
+    
+    def _cleanup_old_active_breaks(self):
+        """
+        Автоматически завершает старые активные перерывы (не за сегодня)
+        Вызывается при инициализации BreakManager
+        """
+        try:
+            today = date.today().isoformat()
+            ws = self.sheets.get_worksheet(self.USAGE_LOG_SHEET)
+            rows = self.sheets._read_table(ws)
+            
+            cleaned_count = 0
+            for row in rows:
+                end_time = row.get('EndTime') or row.get('end_time') or None
+                status = row.get('Status') or row.get('status') or ''
+                start_time_str = str(row.get('StartTime') or row.get('start_time') or '')
+                
+                # Проверяем, что перерыв активен и не за сегодня
+                has_end_time = end_time is not None and str(end_time).strip() != ''
+                is_active_status = status == 'Active' or status == '' or status is None or not status
+                is_active = not has_end_time and is_active_status
+                is_today = start_time_str.startswith(today)
+                
+                if is_active and not is_today:
+                    # Старый активный перерыв - завершаем его
+                    email = row.get('Email') or row.get('email') or ''
+                    break_type = row.get('BreakType') or row.get('break_type') or ''
+                    
+                    if email and break_type:
+                        try:
+                            logger.info(f"Auto-cleaning old active break: {email}, {break_type}, start_time={start_time_str}")
+                            success, error, duration = self.end_break(email, break_type)
+                            if success:
+                                cleaned_count += 1
+                                logger.info(f"✅ Cleaned old break: {email}, duration={duration} min")
+                            else:
+                                logger.warning(f"Failed to clean old break for {email}: {error}")
+                        except Exception as e:
+                            logger.warning(f"Error cleaning old break for {email}: {e}")
+            
+            if cleaned_count > 0:
+                logger.info(f"Cleaned {cleaned_count} old active breaks on startup")
+            
+        except Exception as e:
+            logger.error(f"Error in _cleanup_old_active_breaks: {e}", exc_info=True)
 
 
 # Тестирование
