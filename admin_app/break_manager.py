@@ -93,6 +93,12 @@ class BreakManager:
         self.sheets = sheets_api
         self._cache: Dict[str, BreakSchedule] = {}
         
+        # Автоматическая очистка старых зависших перерывов при инициализации
+        try:
+            self._cleanup_old_active_breaks()
+        except Exception as e:
+            logger.warning(f"Failed to cleanup old breaks on init: {e}")
+        
         # Импорт настроек
         try:
             from config import (
