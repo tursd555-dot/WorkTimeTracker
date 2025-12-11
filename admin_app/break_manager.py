@@ -728,9 +728,30 @@ class BreakManager:
             
             # 2. Вычислить длительность
             now = datetime.now()
-            start_time = datetime.fromisoformat(active["StartTime"])
+            start_time_str = active.get("StartTime") or active.get("start_time") or ""
+            
+            # Поддерживаем разные форматы времени
+            try:
+                if isinstance(start_time_str, str):
+                    # Убираем timezone если есть (для совместимости)
+                    start_time_clean = start_time_str.replace('Z', '').split('+')[0].split('.')[0]
+                    # Пробуем разные форматы
+                    try:
+                        start_time = datetime.strptime(start_time_clean, "%Y-%m-%d %H:%M:%S")
+                    except ValueError:
+                        try:
+                            start_time = datetime.strptime(start_time_clean, "%Y-%m-%dT%H:%M:%S")
+                        except ValueError:
+                            # Используем fromisoformat как fallback
+                            start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                else:
+                    start_time = datetime.fromisoformat(str(start_time_str))
+            except Exception as e:
+                logger.error(f"Failed to parse start_time: {start_time_str}, error: {e}")
+                return False, f"Ошибка парсинга времени начала перерыва", None
+            
             duration = int((now - start_time).total_seconds() / 60)
-            limit = int(active.get("ExpectedDuration", "15"))
+            limit = int(active.get("ExpectedDuration") or active.get("Duration") or "15")
             
             # 3. Обновить запись об окончании
             self._update_break_end(
@@ -960,6 +981,46 @@ class BreakManager:
     ):
         """Обновляет запись об окончании перерыва (v20.3 format)"""
         try:
+            # Проверяем, является ли это Supabase API
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Для Supabase используем прямой метод обновления
+                try:
+                    from datetime import timezone
+                    # Находим активный перерыв по email и break_type без end_time
+                    response = self.sheets.client.table('break_log')\
+                        .select('id')\
+                        .eq('email', email.lower())\
+                        .eq('break_type', break_type)\
+                        .is_('end_time', 'null')\
+                        .order('start_time', desc=True)\
+                        .limit(1)\
+                        .execute()
+                    
+                    if response.data:
+                        break_id = response.data[0]['id']
+                        
+                        # Обновляем запись
+                        update_data = {
+                            'end_time': end_time.astimezone(timezone.utc).isoformat(),
+                            'duration_minutes': duration,
+                            'status': 'Completed'
+                        }
+                        
+                        self.sheets.client.table('break_log')\
+                            .update(update_data)\
+                            .eq('id', break_id)\
+                            .execute()
+                        
+                        logger.info(f"✅ Updated break end in Supabase: {email}, {break_type}, duration={duration} min")
+                        return
+                    else:
+                        logger.warning(f"No active break found to update: {email}, {break_type}")
+                        return
+                except Exception as e:
+                    logger.error(f"Failed to update break end in Supabase: {e}", exc_info=True)
+                    return
+            
+            # Старый код для Google Sheets
             ws = self.sheets.get_worksheet(self.USAGE_LOG_SHEET)
             all_values = ws.get_all_values()
             
@@ -1000,7 +1061,7 @@ class BreakManager:
                     return
             
         except Exception as e:
-            logger.error(f"Failed to update break end: {e}")
+            logger.error(f"Failed to update break end: {e}", exc_info=True)
     
     def _log_violation(
         self,
