@@ -114,13 +114,13 @@ class SyncManager(QObject):
 
         with self._db_lock:
             email = self._db.get_current_user_email()
-            logger.debug(f"Текущий email пользователя: {email}")
+            logger.info(f"[CHECK_REMOTE] Текущий email пользователя: {email}")  # INFO для отладки
             session = self._db.get_active_session(email) if email else None
             session_id = session["session_id"] if session else None
-            logger.debug(f"Активная сессия: session_id={session_id}")
+            logger.info(f"[CHECK_REMOTE] Активная сессия: session_id={session_id}")  # INFO для отладки
 
         if not email or not session_id:
-            logger.debug("Нет активной сессии для проверки удаленных команд.")
+            logger.info("[CHECK_REMOTE] Нет активной сессии для проверки удаленных команд.")  # INFO для отладки
             return
 
         try:
@@ -144,18 +144,23 @@ class SyncManager(QObject):
                 return
             elif remote_status == "completed":
                 # Сессия завершена (пользователь сам завершил или админ разлогинил)
-                logger.info(f"[SESSION_COMPLETED] Обнаружен статус 'completed' для пользователя {email}. Проверяем, нужно ли разлогинить.")
-                # Проверяем, была ли это принудительная команда от админа
+                # ВАЖНО: В Supabase статус может автоматически меняться с 'kicked' на 'completed'
+                # из-за триггеров/constraints при установке logout_time
+                logger.warning(f"[SESSION_COMPLETED] ⚠️ Обнаружен статус 'completed' для пользователя {email}. Это может быть принудительное разлогинивание!")
+                logger.info(f"[SESSION_COMPLETED] Испускаем force_logout для завершенной сессии (возможно, принудительное разлогинивание от админа).")
                 # Если сессия завершена, но пользователь еще работает - разлогиниваем
                 if self.signals:
-                    logger.info(f"[SESSION_COMPLETED] Испускаем force_logout для завершенной сессии.")
+                    logger.info(f"[SESSION_COMPLETED] ✅ Испускаем force_logout сигнал в GUI.")
                     self.signals.force_logout.emit()
+                    logger.info(f"[SESSION_COMPLETED] ✅ Сигнал force_logout отправлен!")
+                else:
+                    logger.error(f"[SESSION_COMPLETED] ❌ Сигналы не инициализированы! Не могу отправить force_logout.")
                 # Отправляем ACK подтверждение команды
                 try:
                     sheets_api.ack_remote_command(email=email, session_id=session_id)
-                    logger.info(f"ACK отправлен для команды completed пользователя {email}")
+                    logger.info(f"[SESSION_COMPLETED] ACK отправлен для команды completed пользователя {email}")
                 except Exception as ack_error:
-                    logger.error(f"Ошибка отправки ACK: {ack_error}")
+                    logger.error(f"[SESSION_COMPLETED] Ошибка отправки ACK: {ack_error}")
                 
                 # Даём GUI время на отображение сообщения
                 time.sleep(1)
