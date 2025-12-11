@@ -85,6 +85,15 @@ class SupabaseAPI:
             def get_all_values(self):
                 """Получает все значения из таблицы Supabase"""
                 return self.api._get_all_values_from_table(self.table_name)
+            
+            def clear(self):
+                """Очищает таблицу (не реализовано для безопасности, используется delete_rows вместо этого)"""
+                logger.warning(f"clear() called on {self.table_name} - not implemented for safety")
+                pass
+            
+            def delete_rows_by_schedule_id(self, schedule_id: str) -> bool:
+                """Удаляет строки по schedule_id (для break_schedules)"""
+                return self.api._delete_rows_by_schedule_id(self.table_name, schedule_id)
         
         # Маппинг имён листов Google Sheets на таблицы Supabase
         table_mapping = {
@@ -311,6 +320,87 @@ class SupabaseAPI:
     def append_row(self, table: str, values: list):
         """Заглушка для append_row (используется через get_worksheet)"""
         pass
+    
+    def _delete_rows_by_schedule_id(self, table_name: str, schedule_id: str) -> bool:
+        """
+        Удаляет строки из таблицы по schedule_id.
+        
+        Args:
+            table_name: Имя таблицы в Supabase
+            schedule_id: ID шаблона (может быть UUID или строка)
+            
+        Returns:
+            True если успешно удалено
+        """
+        try:
+            if table_name == "break_schedules":
+                # Пробуем удалить по id (UUID) или по name
+                # Сначала пробуем найти по id (если это UUID)
+                try:
+                    # Пробуем удалить по id напрямую (если schedule_id это UUID)
+                    response = self.client.table(table_name)\
+                        .delete()\
+                        .eq('id', schedule_id)\
+                        .execute()
+                    if response.data:
+                        logger.info(f"Deleted schedule by id: {schedule_id}")
+                        # Также удаляем связанные слоты, если таблица существует
+                        self._delete_schedule_slots(schedule_id)
+                        return True
+                except Exception:
+                    pass
+                
+                # Если не удалось по id, пробуем по name
+                try:
+                    response = self.client.table(table_name)\
+                        .delete()\
+                        .eq('name', schedule_id)\
+                        .execute()
+                    if response.data:
+                        logger.info(f"Deleted schedule by name: {schedule_id}")
+                        # Также удаляем связанные слоты
+                        self._delete_schedule_slots_by_name(schedule_id)
+                        return True
+                except Exception:
+                    pass
+                
+                logger.warning(f"Could not delete schedule {schedule_id} from {table_name}")
+                return False
+            else:
+                logger.warning(f"Delete not implemented for table {table_name}")
+                return False
+        except Exception as e:
+            logger.error(f"Failed to delete rows from {table_name}: {e}", exc_info=True)
+            return False
+    
+    def _delete_schedule_slots(self, schedule_db_id: str) -> None:
+        """Удаляет слоты перерывов для указанного шаблона"""
+        for slot_table in ['break_schedule_slots', 'break_slots', 'break_schedule_items']:
+            for schedule_id_field in ['schedule_id', 'break_schedule_id', 'break_schedules_id', 'parent_id']:
+                try:
+                    self.client.table(slot_table)\
+                        .delete()\
+                        .eq(schedule_id_field, schedule_db_id)\
+                        .execute()
+                    logger.info(f"Deleted slots from {slot_table} with field {schedule_id_field}")
+                    return
+                except Exception:
+                    continue
+    
+    def _delete_schedule_slots_by_name(self, schedule_name: str) -> None:
+        """Удаляет слоты перерывов для шаблона по имени (сначала находит id)"""
+        try:
+            # Находим id шаблона по имени
+            response = self.client.table('break_schedules')\
+                .select('id')\
+                .eq('name', schedule_name)\
+                .execute()
+            
+            if response.data:
+                schedule_db_id = response.data[0]['id']
+                self._delete_schedule_slots(schedule_db_id)
+        except Exception as e:
+            logger.debug(f"Could not delete slots by name: {e}")
     
     # ========================================================================
     # USERS
