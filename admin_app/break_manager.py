@@ -278,6 +278,17 @@ class BreakManager:
     def delete_schedule(self, schedule_id: str) -> bool:
         """Удаляет шаблон графика"""
         try:
+            # Проверяем, является ли это Supabase API
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Используем прямой метод удаления для Supabase
+                result = self.sheets._delete_rows_by_schedule_id("break_schedules", schedule_id)
+                if result:
+                    # Сбрасываем кэш
+                    self._cache.pop(schedule_id, None)
+                    logger.info(f"Deleted schedule: {schedule_id}")
+                return result
+            
+            # Старый код для Google Sheets
             ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
             values = self.sheets._request_with_retry(ws.get_all_values)
             
@@ -310,7 +321,7 @@ class BreakManager:
             return True
             
         except Exception as e:
-            logger.error(f"Failed to delete schedule: {e}")
+            logger.error(f"Failed to delete schedule {schedule_id}: {e}", exc_info=True)
             return False
     
     # =================== НАЗНАЧЕНИЕ ГРАФИКОВ ===================
