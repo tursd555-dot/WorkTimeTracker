@@ -262,21 +262,30 @@ class AdminRepo:
                 query = self.sheets.client.table('work_log').select('*')
                 
                 # Фильтр по дате
-                # Используем более широкий диапазон для захвата всех записей за день
+                # Учитываем возможное смещение часовых поясов: расширяем диапазон на ±1 день
+                # чтобы захватить все записи, которые могут относиться к выбранной дате
                 if date_from:
-                    query = query.gte('timestamp', f"{date_from}T00:00:00+00:00")
+                    try:
+                        date_from_dt = datetime.strptime(date_from, '%Y-%m-%d')
+                        # Начинаем с предыдущего дня (для учета записей, записанных в UTC, но относящихся к локальной дате)
+                        prev_day = date_from_dt - timedelta(days=1)
+                        query = query.gte('timestamp', prev_day.strftime('%Y-%m-%d') + 'T00:00:00+00:00')
+                        logger.debug(f"Date filter: date_from='{date_from}', using range from '{prev_day.isoformat()}'")
+                    except Exception as e:
+                        logger.warning(f"Failed to parse date_from '{date_from}': {e}, using fallback")
+                        query = query.gte('timestamp', f"{date_from}T00:00:00+00:00")
                 if date_to:
-                    # Используем начало следующего дня для корректного захвата всех записей за date_to
-                    # Это гарантирует, что мы захватим все записи до 23:59:59.999 включительно
+                    # Используем начало следующего дня + 1 день для корректного захвата всех записей
                     try:
                         date_to_dt = datetime.strptime(date_to, '%Y-%m-%d')
-                        next_day = date_to_dt + timedelta(days=1)
-                        date_to_end = next_day.strftime('%Y-%m-%d') + 'T00:00:00+00:00'
-                        query = query.lt('timestamp', date_to_end)  # Используем lt вместо lte
+                        # Захватываем до конца следующего дня (для учета записей, записанных в UTC)
+                        next_next_day = date_to_dt + timedelta(days=2)
+                        date_to_end = next_next_day.strftime('%Y-%m-%d') + 'T00:00:00+00:00'
+                        query = query.lt('timestamp', date_to_end)
                         logger.debug(f"Date filter: date_to='{date_to}', using range up to '{date_to_end}'")
                     except Exception as e:
                         logger.warning(f"Failed to parse date_to '{date_to}': {e}, using fallback")
-                        query = query.lte('timestamp', f"{date_to}T23:59:59.999+00:00")
+                        query = query.lt('timestamp', f"{(date_to_dt + timedelta(days=1)).strftime('%Y-%m-%d')}T00:00:00+00:00")
                 
                 # Фильтр по email
                 if email:
