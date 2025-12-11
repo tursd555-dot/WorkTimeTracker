@@ -822,14 +822,25 @@ class SupabaseAPI:
                 }
                 records.append(record)
             
-            # Вставляем записи batch-ом
-            self.client.table('work_log').insert(records).execute()
-            
-            logger.info(f"Logged {len(records)} actions for {email}")
-            return True
+            # Вставляем записи batch-ом с обработкой ошибок сокета
+            try:
+                self.client.table('work_log').insert(records).execute()
+                logger.info(f"Logged {len(records)} actions for {email}")
+                return True
+            except Exception as insert_error:
+                # Ошибки сокета в Windows (WinError 10035) не критичны для работы приложения
+                error_str = str(insert_error)
+                if '10035' in error_str or 'socket' in error_str.lower() or 'ReadError' in str(type(insert_error).__name__):
+                    logger.warning(f"Socket error while logging actions for {email} (non-critical): {insert_error}")
+                    # Возвращаем True, чтобы не блокировать основную функциональность
+                    return True
+                else:
+                    # Другие ошибки - пробрасываем дальше
+                    raise
             
         except Exception as e:
             logger.error(f"Failed to log user actions for {email}: {e}", exc_info=True)
+            # Не блокируем основную функциональность из-за ошибок логирования
             return False
     
     # ========================================================================
