@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Dict, Any
 import logging
 
-from api_adapter import SheetsAPI
+from api_adapter import SheetsAPI, USE_BACKEND
 from config import GOOGLE_SHEET_NAME
 
 log = logging.getLogger(__name__)
@@ -68,6 +68,11 @@ def ensure_sheet_exists(api: SheetsAPI):
         ]], value_input_option="USER_ENTERED")
 
 def load_rules() -> List[Rule]:
+    # При использовании Supabase правила уведомлений пока не поддерживаются
+    if USE_BACKEND == "supabase":
+        log.debug("Notification rules not supported with Supabase backend yet")
+        return []
+
     api = SheetsAPI()
     ensure_sheet_exists(api)
     ws = api.client.open(GOOGLE_SHEET_NAME).worksheet(RULES_SHEET)
