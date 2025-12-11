@@ -320,14 +320,18 @@ class EmployeeApp(QWidget):
     def _is_session_finished_remote(self) -> bool:
         """
         True — если в ActiveSessions текущая (или последняя по email) сессия
-        имеет статус 'finished' или 'kicked'.
+        имеет статус 'finished', 'kicked' или 'completed'.
+        
+        ВАЖНО: В Supabase статус может автоматически меняться с 'kicked' на 'completed'
+        из-за триггеров/constraints при установке logout_time, поэтому проверяем и 'completed'.
         """
         try:
             api = get_sheets_api()
             if hasattr(api, "check_user_session_status"):
                 st = str(api.check_user_session_status(self.email, self.session_id)).strip().lower()
-                logger.debug(f"[ACTIVESESSIONS] status for {self.email}/{self.session_id}: {st}")
-                if st in ("finished", "kicked"):
+                logger.info(f"[ACTIVESESSIONS] status for {self.email}/{self.session_id}: {st}")  # INFO для отладки
+                if st in ("finished", "kicked", "completed"):
+                    logger.info(f"[ACTIVESESSIONS] ✅ Сессия завершена (статус: {st})")
                     return True
 
             if hasattr(api, "get_all_active_sessions"):
@@ -338,10 +342,12 @@ class EmployeeApp(QWidget):
                         last_for_email = s
                 if last_for_email:
                     st2 = str(last_for_email.get("Status", "")).strip().lower()
-                    logger.debug(f"[ACTIVESESSIONS] fallback status for {self.email}: {st2}")
-                    return st2 in ("finished", "kicked")
+                    logger.info(f"[ACTIVESESSIONS] fallback status for {self.email}: {st2}")  # INFO для отладки
+                    if st2 in ("finished", "kicked", "completed"):
+                        logger.info(f"[ACTIVESESSIONS] ✅ Сессия завершена (fallback статус: {st2})")
+                        return True
         except Exception as e:
-            logger.debug(f"_is_session_finished_remote error: {e}")
+            logger.error(f"_is_session_finished_remote error: {e}", exc_info=True)  # ERROR для отладки
         return False
 
     def _is_shift_ended(self) -> bool:
