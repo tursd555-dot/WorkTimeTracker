@@ -655,12 +655,19 @@ class ReportsTab(QWidget):
                 group = user.get('Group', 'Без группы')
                 violations_by_group[group] = violations_by_group.get(group, 0) + 1
             
+            # Сортируем по общему времени (убывание)
+            sorted_groups = sorted(
+                groups_data.items(),
+                key=lambda x: x[1]['total_seconds'],
+                reverse=True
+            )
+            
             # Заполняем таблицу
-            self.groups_table.setRowCount(len(groups_data))
+            self.groups_table.setRowCount(len(sorted_groups))
             total_time = 0
             total_productive = 0
             
-            for row, (group_name, data) in enumerate(sorted(groups_data.items())):
+            for row, (group_name, data) in enumerate(sorted_groups):
                 employees_count = len(data['employees'])
                 total_hours = data['total_seconds'] // 3600
                 total_mins = (data['total_seconds'] % 3600) // 60
@@ -755,10 +762,11 @@ class ReportsTab(QWidget):
                     statuses_data[status]['employees'].add(email)
                     total_seconds += seconds
             
-            # Заполняем таблицу
-            self.statuses_table.setRowCount(len(statuses_data))
+            # Заполняем таблицу (сортируем по времени)
+            sorted_statuses = sorted(statuses_data.items(), key=lambda x: x[1]['seconds'], reverse=True)
+            self.statuses_table.setRowCount(len(sorted_statuses))
             
-            for row, (status, data) in enumerate(sorted(statuses_data.items(), key=lambda x: x[1]['seconds'], reverse=True)):
+            for row, (status, data) in enumerate(sorted_statuses):
                 hours = data['seconds'] // 3600
                 mins = (data['seconds'] % 3600) // 60
                 time_str = f"{hours}:{mins:02d}"
@@ -767,7 +775,11 @@ class ReportsTab(QWidget):
                 
                 avg_duration = data['seconds'] / data['transitions'] if data['transitions'] > 0 else 0
                 avg_mins = int(avg_duration // 60)
-                avg_duration_str = f"{avg_mins} мин"
+                avg_secs = int(avg_duration % 60)
+                if avg_mins > 0:
+                    avg_duration_str = f"{avg_mins} мин {avg_secs} сек"
+                else:
+                    avg_duration_str = f"{avg_secs} сек"
                 
                 employees_count = len(data['employees'])
                 
@@ -837,7 +849,7 @@ class ReportsTab(QWidget):
                 total_seconds += time_data['total_seconds']
                 productive_seconds += time_data['productive_seconds']
             
-            # Сортируем по продуктивному времени
+            # Сортируем по продуктивному времени (топ-10)
             sorted_employees = sorted(
                 employees_data.items(),
                 key=lambda x: x[1]['productive_seconds'],
@@ -862,6 +874,13 @@ class ReportsTab(QWidget):
                 self.productivity_table.setItem(row, 2, QTableWidgetItem(prod_time_str))
                 self.productivity_table.setItem(row, 3, QTableWidgetItem(f"{productivity_percent:.1f}%"))
                 self.productivity_table.setItem(row, 4, QTableWidgetItem(str(sessions_count)))
+            
+            # Если нет данных, показываем сообщение
+            if not sorted_employees:
+                self.productivity_table.setRowCount(1)
+                self.productivity_table.setItem(0, 0, QTableWidgetItem("Нет данных за выбранный период"))
+                for col in range(1, 5):
+                    self.productivity_table.setItem(0, col, QTableWidgetItem(""))
             
             # Обновляем карточки
             prod_hours = productive_seconds // 3600
