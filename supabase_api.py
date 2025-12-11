@@ -69,16 +69,70 @@ class SupabaseAPI:
             return False
     
     def get_worksheet(self, name: str):
-        """Заглушка для совместимости"""
-        return None
+        """
+        Возвращает объект-заглушку для совместимости с Google Sheets API.
+        Для Supabase имя таблицы сохраняется в объекте для последующего использования.
+        """
+        class WorksheetStub:
+            def __init__(self, table_name: str, api_instance):
+                self.table_name = table_name
+                self.api = api_instance
+            
+            def append_row(self, row: List[Any]):
+                """Добавляет строку в таблицу Supabase"""
+                return self.api._append_row_to_table(self.table_name, row)
+            
+            def get_all_values(self):
+                """Получает все значения из таблицы Supabase"""
+                return self.api._get_all_values_from_table(self.table_name)
+        
+        # Маппинг имён листов Google Sheets на таблицы Supabase
+        table_mapping = {
+            "BreakSchedules": "break_schedules",
+            "UserBreakAssignments": "user_break_assignments",
+            "BreakUsageLog": "break_usage_log",
+            "BreakViolations": "break_violations",
+        }
+        
+        table_name = table_mapping.get(name, name.lower().replace(" ", "_"))
+        return WorksheetStub(table_name, self)
     
     def _get_ws(self, name: str):
-        """Заглушка для совместимости"""
-        return None
+        """Алиас для get_worksheet"""
+        return self.get_worksheet(name)
     
-    def _read_table(self, worksheet):
-        """Заглушка для совместимости"""
-        return []
+    def _read_table(self, worksheet) -> List[Dict]:
+        """
+        Читает данные из таблицы Supabase и преобразует в формат Google Sheets.
+        
+        Args:
+            worksheet: Объект WorksheetStub с table_name
+            
+        Returns:
+            Список словарей с данными строк
+        """
+        if worksheet is None:
+            return []
+        
+        try:
+            table_name = worksheet.table_name
+            response = self.client.table(table_name).select('*').execute()
+            
+            # Преобразуем данные в формат Google Sheets (с заглавными ключами)
+            rows = []
+            for row in response.data:
+                # Преобразуем ключи в заглавные для совместимости
+                formatted_row = {}
+                for key, value in row.items():
+                    # Преобразуем snake_case в PascalCase
+                    pascal_key = ''.join(word.capitalize() for word in key.split('_'))
+                    formatted_row[pascal_key] = value
+                rows.append(formatted_row)
+            
+            return rows
+        except Exception as e:
+            logger.error(f"Failed to read table {getattr(worksheet, 'table_name', 'unknown')}: {e}", exc_info=True)
+            return []
     
     def _request_with_retry(self, func, *args, **kwargs):
         """Выполнить с retry"""
@@ -88,8 +142,74 @@ class SupabaseAPI:
             logger.error(f"Request failed: {e}")
             raise
     
+    def _append_row_to_table(self, table_name: str, values: List[Any]) -> bool:
+        """
+        Добавляет строку в таблицу Supabase.
+        
+        Args:
+            table_name: Имя таблицы в Supabase
+            values: Список значений для вставки
+            
+        Returns:
+            True если успешно
+        """
+        try:
+            # Маппинг колонок для break_schedules
+            if table_name == "break_schedules":
+                # Формат: [schedule_id, name, shift_start, shift_end, break_type, time_minutes, window_start, window_end, priority]
+                if len(values) >= 9:
+                    data = {
+                        'schedule_id': str(values[0]),
+                        'name': str(values[1]),
+                        'shift_start': str(values[2]),
+                        'shift_end': str(values[3]),
+                        'slot_type': str(values[4]),
+                        'duration': int(values[5]) if values[5] else 15,
+                        'window_start': str(values[6]),
+                        'window_end': str(values[7]),
+                        'priority': int(values[8]) if values[8] else 1
+                    }
+                    self.client.table(table_name).insert(data).execute()
+                    return True
+            else:
+                # Для других таблиц пока не реализовано
+                logger.warning(f"Table {table_name} insert not implemented yet")
+                return False
+        except Exception as e:
+            logger.error(f"Failed to append row to {table_name}: {e}", exc_info=True)
+            return False
+    
+    def _get_all_values_from_table(self, table_name: str) -> List[List[Any]]:
+        """
+        Получает все значения из таблицы Supabase в формате списка списков (как Google Sheets).
+        
+        Args:
+            table_name: Имя таблицы в Supabase
+            
+        Returns:
+            Список списков значений (первая строка - заголовки)
+        """
+        try:
+            response = self.client.table(table_name).select('*').execute()
+            
+            if not response.data:
+                return []
+            
+            # Первая строка - заголовки
+            headers = list(response.data[0].keys())
+            rows = [headers]
+            
+            # Остальные строки - данные
+            for row in response.data:
+                rows.append([row.get(h, '') for h in headers])
+            
+            return rows
+        except Exception as e:
+            logger.error(f"Failed to get all values from {table_name}: {e}", exc_info=True)
+            return []
+    
     def append_row(self, table: str, values: list):
-        """Заглушка для append_row"""
+        """Заглушка для append_row (используется через get_worksheet)"""
         pass
     
     # ========================================================================
