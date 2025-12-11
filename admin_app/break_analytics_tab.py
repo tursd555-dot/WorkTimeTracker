@@ -773,9 +773,9 @@ class BreakAnalyticsTab(QWidget):
         
         # Таблица
         table = QTableWidget()
-        table.setColumnCount(6)
+        table.setColumnCount(7)
         table.setHorizontalHeaderLabels([
-            "Email", "Имя", "Тип", "Начало", "Длительность (мин)", "Статус"
+            "Email", "Имя", "Тип", "Начало", "Длительность (мин)", "Статус", "Нарушение"
         ])
         table.horizontalHeader().setStretchLastSection(True)
         table.setRowCount(len(self.dashboard_active_breaks_data))
@@ -788,6 +788,8 @@ class BreakAnalyticsTab(QWidget):
             start = br.get('StartTime', 'N/A')
             duration = br.get('Duration', 0)
             is_over = br.get('is_over_limit', False)
+            is_violator = br.get('is_violator', False)
+            violation_reason = br.get('violation_reason', '')
             
             table.setItem(row, 0, QTableWidgetItem(email))
             table.setItem(row, 1, QTableWidgetItem(name))
@@ -795,11 +797,23 @@ class BreakAnalyticsTab(QWidget):
             table.setItem(row, 3, QTableWidgetItem(start))
             table.setItem(row, 4, QTableWidgetItem(str(duration)))
             
-            status_item = QTableWidgetItem("⚠️ Превышен" if is_over else "✅ В норме")
+            # Статус: норма или превышен лимит времени
+            status_text = "✅ В норме"
+            if is_over:
+                status_text = "⚠️ Превышен лимит"
+            status_item = QTableWidgetItem(status_text)
             if is_over:
                 status_item.setBackground(QColor("#e74c3c"))
                 status_item.setForeground(QColor("white"))
             table.setItem(row, 5, status_item)
+            
+            # Колонка нарушений
+            violation_text = "✅ Норма" if not is_violator else f"❌ {violation_reason or 'Нарушитель'}"
+            violation_item = QTableWidgetItem(violation_text)
+            if is_violator:
+                violation_item.setForeground(QColor(255, 140, 0))  # Оранжевый для нарушителей
+                violation_item.setBackground(QColor(255, 250, 240))  # Светло-оранжевый фон
+            table.setItem(row, 6, violation_item)
         
         table.resizeColumnsToContents()
         layout.addWidget(table)
