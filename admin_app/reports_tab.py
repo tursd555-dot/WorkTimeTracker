@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox,
     QDateEdit, QComboBox, QLineEdit, QSplitter, QFrame,
     QMessageBox, QFileDialog, QTabWidget, QCheckBox, QSpinBox,
-    QProgressBar, QTextEdit
+    QProgressBar, QTextEdit, QListWidget, QListWidgetItem
 )
 from PyQt5.QtCore import Qt, QDate, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QColor
@@ -171,6 +171,14 @@ class ReportsTab(QWidget):
         # Отчет по перерывам
         self.breaks_tab = self._build_breaks_report()
         self.reports_tabs.addTab(self.breaks_tab, "☕ Перерывы")
+        
+        # Отчет по времени логина/логаута
+        self.login_logout_tab = self._build_login_logout_report()
+        self.reports_tabs.addTab(self.login_logout_tab, "🔐 Логины/Логауты")
+        
+        # Отчет по всем статусам за дату
+        self.all_statuses_tab = self._build_all_statuses_report()
+        self.reports_tabs.addTab(self.all_statuses_tab, "📊 Все статусы")
     
     def _build_employees_report(self) -> QWidget:
         """Создаёт отчет по сотрудникам"""
@@ -369,6 +377,121 @@ class ReportsTab(QWidget):
         
         return widget
     
+    def _build_login_logout_report(self) -> QWidget:
+        """Создаёт отчет по времени логина/логаута сотрудника"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Фильтры
+        filters_layout = QHBoxLayout()
+        filters_layout.addWidget(QLabel("Сотрудник:"))
+        
+        self.login_logout_user_combo = QComboBox()
+        self.login_logout_user_combo.setEditable(True)
+        self.login_logout_user_combo.addItem("Выберите сотрудника")
+        self.login_logout_user_combo.setInsertPolicy(QComboBox.NoInsert)
+        filters_layout.addWidget(self.login_logout_user_combo)
+        
+        filters_layout.addWidget(QLabel("Дата:"))
+        self.login_logout_date = QDateEdit()
+        self.login_logout_date.setCalendarPopup(True)
+        self.login_logout_date.setDate(QDate.currentDate())
+        filters_layout.addWidget(self.login_logout_date)
+        
+        btn_apply_login_logout = QPushButton("Применить")
+        btn_apply_login_logout.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 5px 15px;")
+        btn_apply_login_logout.clicked.connect(self._update_login_logout_report)
+        filters_layout.addWidget(btn_apply_login_logout)
+        
+        filters_layout.addStretch()
+        layout.addLayout(filters_layout)
+        
+        # Таблица
+        self.login_logout_table = QTableWidget()
+        self.login_logout_table.setColumnCount(4)
+        self.login_logout_table.setHorizontalHeaderLabels([
+            "Время логина", "Время логаута", "Длительность сессии", "Статус"
+        ])
+        self.login_logout_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.login_logout_table.setAlternatingRowColors(True)
+        layout.addWidget(self.login_logout_table)
+        
+        return widget
+    
+    def _build_all_statuses_report(self) -> QWidget:
+        """Создаёт отчет по всем статусам за дату"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        
+        # Фильтры
+        filters_group = QGroupBox("Фильтры")
+        filters_layout = QVBoxLayout()
+        
+        # Первая строка: дата и группа
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel("Дата:"))
+        self.all_statuses_date = QDateEdit()
+        self.all_statuses_date.setCalendarPopup(True)
+        self.all_statuses_date.setDate(QDate.currentDate())
+        row1.addWidget(self.all_statuses_date)
+        
+        row1.addWidget(QLabel("Группы:"))
+        self.all_statuses_groups_list = QListWidget()
+        self.all_statuses_groups_list.setSelectionMode(QListWidget.MultiSelection)
+        self.all_statuses_groups_list.setMaximumHeight(100)
+        row1.addWidget(self.all_statuses_groups_list)
+        
+        row1.addStretch()
+        filters_layout.addLayout(row1)
+        
+        # Вторая строка: сотрудники
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("Сотрудники:"))
+        self.all_statuses_users_list = QListWidget()
+        self.all_statuses_users_list.setSelectionMode(QListWidget.MultiSelection)
+        self.all_statuses_users_list.setMaximumHeight(100)
+        row2.addWidget(self.all_statuses_users_list)
+        
+        row2.addStretch()
+        filters_layout.addLayout(row2)
+        
+        # Третья строка: поиск и фильтр по статусам
+        row3 = QHBoxLayout()
+        row3.addWidget(QLabel("Поиск:"))
+        self.all_statuses_search = QLineEdit()
+        self.all_statuses_search.setPlaceholderText("Поиск по имени, email...")
+        row3.addWidget(self.all_statuses_search)
+        
+        row3.addWidget(QLabel("Статус:"))
+        self.all_statuses_status_combo = QComboBox()
+        self.all_statuses_status_combo.setEditable(True)
+        self.all_statuses_status_combo.addItem("Все статусы")
+        self.all_statuses_status_combo.setInsertPolicy(QComboBox.NoInsert)
+        row3.addWidget(self.all_statuses_status_combo)
+        
+        btn_apply_all_statuses = QPushButton("Применить")
+        btn_apply_all_statuses.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 5px 15px;")
+        btn_apply_all_statuses.clicked.connect(self._update_all_statuses_report)
+        row3.addWidget(btn_apply_all_statuses)
+        
+        row3.addStretch()
+        filters_layout.addLayout(row3)
+        
+        filters_group.setLayout(filters_layout)
+        layout.addWidget(filters_group)
+        
+        # Таблица
+        self.all_statuses_table = QTableWidget()
+        self.all_statuses_table.setColumnCount(6)
+        self.all_statuses_table.setHorizontalHeaderLabels([
+            "Время", "Сотрудник", "Группа", "Статус", "Детали", "Сессия"
+        ])
+        self.all_statuses_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.all_statuses_table.setAlternatingRowColors(True)
+        layout.addWidget(self.all_statuses_table)
+        
+        return widget
+    
     def _build_actions(self) -> QGroupBox:
         """Создаёт панель действий"""
         group = QGroupBox("Действия")
@@ -547,14 +670,51 @@ class ReportsTab(QWidget):
                 if email:
                     display_text = f"{name} ({email})" if name else email
                     self.users_combo.addItem(display_text)
+                    # Для отчета по логинам/логаутам
+                    self.login_logout_user_combo.addItem(display_text)
+                    # Для отчета по всем статусам
+                    item = QListWidgetItem(display_text)
+                    item.setData(Qt.UserRole, email)
+                    self.all_statuses_users_list.addItem(item)
             
             # Загружаем группы
             groups = self.repo.list_groups_from_sheet()
             for group in groups:
                 if group:
                     self.groups_combo.addItem(group)
+                    # Для отчета по всем статусам
+                    item = QListWidgetItem(group)
+                    self.all_statuses_groups_list.addItem(item)
+            
+            # Загружаем уникальные статусы для фильтра
+            self._load_statuses_for_filter()
         except Exception as e:
             logger.error(f"Failed to load initial data: {e}")
+    
+    def _load_statuses_for_filter(self):
+        """Загружает список уникальных статусов для фильтра"""
+        try:
+            # Получаем данные за последний месяц для определения статусов
+            date_to = datetime.now().date()
+            date_from = date_to - timedelta(days=30)
+            
+            work_log_data = self.repo.get_work_log_data(
+                date_from=date_from.isoformat(),
+                date_to=date_to.isoformat()
+            )
+            
+            # Собираем уникальные статусы
+            statuses = set()
+            for entry in work_log_data:
+                status = entry.get('status', '')
+                if status:
+                    statuses.add(status)
+            
+            # Добавляем в комбобокс
+            for status in sorted(statuses):
+                self.all_statuses_status_combo.addItem(status)
+        except Exception as e:
+            logger.warning(f"Failed to load statuses for filter: {e}")
     
     def _set_period_today(self):
         """Устанавливает период на сегодня"""
@@ -1286,6 +1446,245 @@ class ReportsTab(QWidget):
             dialog.exec_()
         except Exception as e:
             logger.error(f"Failed to show breaks details: {e}")
+    
+    def _update_login_logout_report(self):
+        """Обновляет отчет по времени логина/логаута"""
+        try:
+            # Получаем выбранного сотрудника
+            selected_user = self.login_logout_user_combo.currentText()
+            if not selected_user or selected_user == "Выберите сотрудника":
+                QMessageBox.warning(self, "Ошибка", "Выберите сотрудника")
+                return
+            
+            # Извлекаем email
+            if '(' in selected_user and ')' in selected_user:
+                email = selected_user.split('(')[-1].rstrip(')').lower().strip()
+            else:
+                email = selected_user.lower().strip()
+            
+            # Получаем выбранную дату
+            selected_date = self.login_logout_date.date().toPyDate()
+            date_str = selected_date.isoformat()
+            
+            # Получаем данные из work_log за выбранную дату
+            work_log_data = self.repo.get_work_log_data(
+                date_from=date_str,
+                date_to=date_str,
+                email=email
+            )
+            
+            # Фильтруем только LOGIN и LOGOUT записи
+            login_logout_entries = []
+            for entry in work_log_data:
+                action_type = entry.get('action_type', '')
+                if action_type in ['LOGIN', 'LOGOUT']:
+                    login_logout_entries.append(entry)
+            
+            # Сортируем по времени
+            sorted_entries = sorted(login_logout_entries, key=lambda x: x.get('timestamp', ''))
+            
+            # Группируем по сессиям (LOGIN -> LOGOUT)
+            # Используем session_id для правильной группировки
+            sessions_dict = {}  # session_id -> session info
+            
+            for entry in sorted_entries:
+                action_type = entry.get('action_type', '')
+                timestamp_str = entry.get('timestamp', '')
+                session_id = entry.get('session_id', '')
+                
+                if action_type == 'LOGIN':
+                    if session_id and session_id not in sessions_dict:
+                        sessions_dict[session_id] = {
+                            'login_time': timestamp_str,
+                            'logout_time': None,
+                            'session_id': session_id,
+                            'status': entry.get('status', '')
+                        }
+                    elif not session_id:
+                        # Если нет session_id, создаем уникальный ключ
+                        unique_key = f"session_{len(sessions_dict)}"
+                        sessions_dict[unique_key] = {
+                            'login_time': timestamp_str,
+                            'logout_time': None,
+                            'session_id': '',
+                            'status': entry.get('status', '')
+                        }
+                elif action_type == 'LOGOUT':
+                    # Ищем соответствующую сессию LOGIN
+                    if session_id and session_id in sessions_dict:
+                        sessions_dict[session_id]['logout_time'] = timestamp_str
+                    else:
+                        # Если не нашли по session_id, ищем последнюю незавершенную сессию
+                        for key, session in sessions_dict.items():
+                            if session['logout_time'] is None:
+                                session['logout_time'] = timestamp_str
+                                break
+            
+            # Преобразуем в список
+            sessions = list(sessions_dict.values())
+            
+            # Заполняем таблицу
+            self.login_logout_table.setRowCount(len(sessions))
+            
+            for row, session in enumerate(sessions):
+                login_time = session['login_time']
+                logout_time = session['logout_time'] or "В процессе..."
+                session_id = session['session_id']
+                status = session['status'] or "N/A"
+                
+                # Форматируем время
+                try:
+                    if 'T' in login_time:
+                        login_dt = datetime.fromisoformat(login_time.replace('Z', '+00:00'))
+                        login_formatted = login_dt.strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        login_formatted = login_time[:19] if len(login_time) >= 19 else login_time
+                except:
+                    login_formatted = login_time
+                
+                try:
+                    if logout_time != "В процессе...":
+                        if 'T' in logout_time:
+                            logout_dt = datetime.fromisoformat(logout_time.replace('Z', '+00:00'))
+                            logout_formatted = logout_dt.strftime('%Y-%m-%d %H:%M:%S')
+                        else:
+                            logout_formatted = logout_time[:19] if len(logout_time) >= 19 else logout_time
+                    else:
+                        logout_formatted = logout_time
+                except:
+                    logout_formatted = logout_time
+                
+                # Вычисляем длительность сессии
+                if logout_time != "В процессе...":
+                    try:
+                        login_dt = datetime.fromisoformat(login_time.replace('Z', '+00:00'))
+                        logout_dt = datetime.fromisoformat(logout_time.replace('Z', '+00:00'))
+                        duration = (logout_dt - login_dt).total_seconds()
+                        hours = int(duration // 3600)
+                        mins = int((duration % 3600) // 60)
+                        duration_str = f"{hours}:{mins:02d}"
+                    except:
+                        duration_str = "N/A"
+                else:
+                    duration_str = "В процессе..."
+                
+                self.login_logout_table.setItem(row, 0, QTableWidgetItem(login_formatted))
+                self.login_logout_table.setItem(row, 1, QTableWidgetItem(logout_formatted))
+                self.login_logout_table.setItem(row, 2, QTableWidgetItem(duration_str))
+                self.login_logout_table.setItem(row, 3, QTableWidgetItem(status))
+            
+        except Exception as e:
+            logger.error(f"Failed to update login/logout report: {e}", exc_info=True)
+            QMessageBox.warning(self, "Ошибка", f"Не удалось обновить отчет: {e}")
+    
+    def _update_all_statuses_report(self):
+        """Обновляет отчет по всем статусам за дату"""
+        try:
+            # Получаем выбранную дату
+            selected_date = self.all_statuses_date.date().toPyDate()
+            date_str = selected_date.isoformat()
+            
+            # Получаем выбранные группы
+            selected_groups = []
+            for item in self.all_statuses_groups_list.selectedItems():
+                selected_groups.append(item.text())
+            
+            # Получаем выбранных сотрудников
+            selected_emails = []
+            for item in self.all_statuses_users_list.selectedItems():
+                email = item.data(Qt.UserRole)
+                if email:
+                    selected_emails.append(email.lower())
+            
+            # Получаем фильтр по статусу
+            status_filter = self.all_statuses_status_combo.currentText()
+            if status_filter == "Все статусы":
+                status_filter = None
+            
+            # Получаем поисковый запрос
+            search_query = self.all_statuses_search.text().lower().strip()
+            
+            # Получаем данные из work_log за выбранную дату
+            work_log_data = self.repo.get_work_log_data(
+                date_from=date_str,
+                date_to=date_str
+            )
+            
+            # Фильтруем по группам (если выбраны)
+            if selected_groups:
+                users = self.repo.list_users()
+                group_emails = set()
+                for user in users:
+                    if user.get('Group', '') in selected_groups:
+                        group_emails.add(user.get('Email', '').lower())
+                work_log_data = [e for e in work_log_data if e.get('email', '').lower() in group_emails]
+            
+            # Фильтруем по сотрудникам (если выбраны)
+            if selected_emails:
+                work_log_data = [e for e in work_log_data if e.get('email', '').lower() in selected_emails]
+            
+            # Фильтруем по статусу
+            if status_filter:
+                work_log_data = [e for e in work_log_data if e.get('status', '') == status_filter]
+            
+            # Фильтруем по поисковому запросу
+            if search_query:
+                users = self.repo.list_users()
+                users_dict = {u.get("Email", "").lower(): u for u in users}
+                filtered_data = []
+                for entry in work_log_data:
+                    email = entry.get('email', '').lower()
+                    user = users_dict.get(email, {})
+                    name = user.get('Name', '')
+                    if (search_query in email or 
+                        (name and search_query in name.lower()) or
+                        search_query in entry.get('status', '').lower()):
+                        filtered_data.append(entry)
+                work_log_data = filtered_data
+            
+            # Сортируем по времени
+            sorted_data = sorted(work_log_data, key=lambda x: x.get('timestamp', ''))
+            
+            # Получаем информацию о пользователях
+            users = self.repo.list_users()
+            users_dict = {u.get("Email", "").lower(): u for u in users}
+            
+            # Заполняем таблицу
+            self.all_statuses_table.setRowCount(len(sorted_data))
+            
+            for row, entry in enumerate(sorted_data):
+                timestamp_str = entry.get('timestamp', '')
+                email = entry.get('email', '').lower()
+                status = entry.get('status', 'N/A')
+                details = entry.get('details', '')
+                session_id = entry.get('session_id', '')
+                
+                # Форматируем время
+                try:
+                    if 'T' in timestamp_str:
+                        dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                        time_formatted = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    else:
+                        time_formatted = timestamp_str[:19] if len(timestamp_str) >= 19 else timestamp_str
+                except:
+                    time_formatted = timestamp_str
+                
+                # Получаем имя и группу сотрудника
+                user = users_dict.get(email, {})
+                name = user.get('Name', '')
+                group = user.get('Group', '')
+                display_name = f"{name} ({email})" if name else email
+                
+                self.all_statuses_table.setItem(row, 0, QTableWidgetItem(time_formatted))
+                self.all_statuses_table.setItem(row, 1, QTableWidgetItem(display_name))
+                self.all_statuses_table.setItem(row, 2, QTableWidgetItem(group))
+                self.all_statuses_table.setItem(row, 3, QTableWidgetItem(status))
+                self.all_statuses_table.setItem(row, 4, QTableWidgetItem(str(details) if details else ''))
+                self.all_statuses_table.setItem(row, 5, QTableWidgetItem(session_id[:20] if session_id else ''))
+            
+        except Exception as e:
+            logger.error(f"Failed to update all statuses report: {e}", exc_info=True)
+            QMessageBox.warning(self, "Ошибка", f"Не удалось обновить отчет: {e}")
     
     def _export_to_excel(self):
         """Экспортирует текущий отчет в Excel"""
