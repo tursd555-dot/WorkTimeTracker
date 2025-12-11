@@ -277,11 +277,13 @@ class AdminWindow(QMainWindow):
         breaks_layout.addWidget(self.breaks_tabs)
         self.tabs.addTab(self.tab_breaks, "Перерывы")
 
-        # --- Вкладка "Дополнительно" (плейсхолдер) ---
-        self.tab_extra = QWidget()
-        extra_layout = QVBoxLayout(self.tab_extra)
-        extra_layout.addWidget(QLabel("Тут будет что-то ещё"))
-        self.tabs.addTab(self.tab_extra, "Дополнительно")
+        # --- Вкладка "Отчеты" ---
+        self.tab_reports = QWidget()
+        reports_layout = QVBoxLayout(self.tab_reports)
+        reports_layout.addWidget(QLabel("📊 Система отчетов"))
+        reports_layout.addWidget(QLabel("Функционал отчетов находится в разработке."))
+        reports_layout.addWidget(QLabel("Подробное описание доступно в файле REPORTS_FUNCTIONALITY.md"))
+        self.tabs.addTab(self.tab_reports, "📊 Отчеты")
 
         self.setCentralWidget(self.tabs)
 
