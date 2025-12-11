@@ -820,6 +820,7 @@ class SupabaseAPI:
             user_id = user_response.data[0]['id'] if user_response.data else None
             
             # Подготавливаем данные для вставки
+            # ВАЖНО: Поле 'comment' может отсутствовать в таблице work_log в Supabase
             records = []
             for action in actions:
                 record = {
@@ -829,13 +830,15 @@ class SupabaseAPI:
                     'timestamp': action.get('timestamp') or datetime.now(timezone.utc).isoformat(),
                     'action_type': action.get('action_type', ''),
                     'status': action.get('status', ''),
-                    'comment': action.get('comment', ''),
+                    # 'comment': action.get('comment', ''),  # Убрано - поле может отсутствовать в таблице
                     'session_id': action.get('session_id', ''),
                     'status_start_time': action.get('status_start_time'),
                     'status_end_time': action.get('status_end_time'),
                     'reason': action.get('reason'),
                     'user_group': user_group or action.get('user_group')
                 }
+                # Удаляем пустые значения для полей, которые могут отсутствовать
+                record = {k: v for k, v in record.items() if v is not None and v != ''}
                 records.append(record)
             
             # Вставляем записи batch-ом с обработкой ошибок сокета
