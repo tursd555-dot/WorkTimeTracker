@@ -159,17 +159,57 @@ class SupabaseAPI:
                         key_mapping = {
                             'id': 'Id',
                             'email': 'Email',
-                            'schedule_id': 'ScheduleID',
+                            'schedule_id': 'ScheduleID',  # Это UUID, но для совместимости оставляем как ScheduleID
                             'effective_date': 'EffectiveDate',
                             'assigned_by': 'AssignedBy',
                             'created_at': 'CreatedAt',
                             'updated_at': 'UpdatedAt',
                         }
+                        
+                        # После преобразования ключей, преобразуем UUID schedule_id в имя шаблона для отображения
+                        if 'schedule_id' in row and row['schedule_id']:
+                            try:
+                                # Пробуем найти имя шаблона по UUID
+                                schedule_response = self.client.table('break_schedules')\
+                                    .select('name, id')\
+                                    .eq('id', row['schedule_id'])\
+                                    .execute()
+                                if schedule_response.data:
+                                    # Сохраняем и UUID и имя для совместимости
+                                    formatted_row['ScheduleID'] = schedule_response.data[0].get('name', row['schedule_id'])
+                                    formatted_row['ScheduleUUID'] = row['schedule_id']  # Сохраняем UUID отдельно
+                                else:
+                                    # Если шаблон не найден, оставляем UUID
+                                    formatted_row['ScheduleID'] = row['schedule_id']
+                            except Exception as e:
+                                logger.debug(f"Could not find schedule name for UUID {row.get('schedule_id')}: {e}")
+                                formatted_row['ScheduleID'] = row.get('schedule_id', '')
                     pascal_key = key_mapping.get(key)
                     if not pascal_key:
                         # Общий случай: snake_case -> PascalCase
                         pascal_key = ''.join(word.capitalize() for word in key.split('_'))
                     formatted_row[pascal_key] = value
+                
+                # Специальная обработка для user_break_assignments: преобразуем UUID в имя шаблона
+                if table_name == "user_break_assignments" and 'schedule_id' in row and row['schedule_id']:
+                    try:
+                        # Пробуем найти имя шаблона по UUID
+                        schedule_response = self.client.table('break_schedules')\
+                            .select('name, id')\
+                            .eq('id', row['schedule_id'])\
+                            .execute()
+                        if schedule_response.data:
+                            # Заменяем UUID на имя шаблона для отображения
+                            formatted_row['ScheduleID'] = schedule_response.data[0].get('name', row['schedule_id'])
+                            formatted_row['ScheduleUUID'] = row['schedule_id']  # Сохраняем UUID отдельно
+                        else:
+                            # Если шаблон не найден (удалён), показываем UUID или "Удалён"
+                            formatted_row['ScheduleID'] = f"[Удалён: {row['schedule_id'][:8]}...]"
+                            formatted_row['ScheduleUUID'] = row['schedule_id']
+                    except Exception as e:
+                        logger.debug(f"Could not find schedule name for UUID {row.get('schedule_id')}: {e}")
+                        formatted_row['ScheduleID'] = row.get('schedule_id', '')
+                
                 rows.append(formatted_row)
                 logger.debug(f"Formatted row: {formatted_row}")
             
