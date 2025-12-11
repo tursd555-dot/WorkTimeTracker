@@ -8,15 +8,22 @@ import logging
 logger = logging.getLogger(__name__)
 
 # ============================================================================
+# Базовый класс ошибок (определяем сразу для обоих режимов)
+# ============================================================================
+class SheetsAPIError(Exception):
+    """Базовый класс ошибок API (совместим с sheets_api и supabase_api)"""
+    pass
+
+# ============================================================================
 # КОНФИГУРАЦИЯ
 # ============================================================================
 
 # Выберите бэкенд: "supabase" или "sheets"
 USE_BACKEND = os.getenv("USE_BACKEND", "supabase")  # supabase или sheets
 
-# Supabase credentials
-SUPABASE_URL = os.getenv("SUPABASE_URL", "https://jtgaobxbwibjcvasefzi.supabase.co")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")  # Будет взят из переменных окружения
+# Supabase credentials (загружаются из .env)
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
 # ============================================================================
 # ADAPTER
@@ -54,16 +61,16 @@ if USE_BACKEND == "supabase":
 
 if USE_BACKEND == "sheets":
     logger.info("📊 Using Google Sheets backend")
-    
+
     from sheets_api import SheetsAPI, get_sheets_api
-    
+
     logger.info("✅ Google Sheets API loaded")
 
 # ============================================================================
 # EXPORT
 # ============================================================================
 
-__all__ = ["get_sheets_api", "SheetsAPI", "USE_BACKEND"]
+__all__ = ["get_sheets_api", "SheetsAPI", "SheetsAPIError", "USE_BACKEND"]
 
 
 if __name__ == "__main__":
