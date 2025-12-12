@@ -368,7 +368,7 @@ class RealtimeMonitorWindow(QMainWindow):
         try:
             # Получаем активные сессии
             sessions = self.repo.get_active_sessions()
-            
+
             # Получаем активные перерывы
             try:
                 active_breaks_list = self.break_mgr.get_all_active_breaks()
@@ -379,38 +379,43 @@ class RealtimeMonitorWindow(QMainWindow):
             except Exception as e:
                 logger.warning(f"Failed to get active breaks: {e}")
                 self.active_breaks = {}
-            
+
             # Получаем список пользователей
             users = self.repo.list_users()
             users_dict = {u.get('Email', '').lower(): u for u in users}
-            
+
+            # Получаем текущие рабочие статусы из work_log
+            current_statuses = self._get_current_user_statuses()
+
             # Обновляем данные пользователей
             self.users_data = {}
             for session in sessions:
                 email = session.get('Email', '').lower()
                 if not email:
                     continue
-                
+
                 # Пропускаем тестовых пользователей
                 if 'test' in email or 'example.com' in email:
                     logger.debug(f"Пропущен тестовый пользователь: {email}")
                     continue
-                
+
                 # Пропускаем пользователей, которых нет в списке Users
                 user = users_dict.get(email, {})
                 if not user:
                     logger.debug(f"Пропущен пользователь без записи в Users: {email}")
                     continue
-                
-                status = session.get('Status', 'Неизвестно')
+
+                # ИСПРАВЛЕНО: Получаем РАБОЧИЙ статус из work_log, а не статус сессии
+                status = current_statuses.get(email, {}).get('status', 'Неизвестно')
+                status_timestamp = current_statuses.get(email, {}).get('timestamp', '')
+
                 login_time_str = session.get('LoginTime', '')
-                
+
                 # Вычисляем время в системе (с момента залогинивания)
-                time_in_system = self._calculate_time_in_status(login_time_str, status)
-                
-                # Вычисляем время в текущем статусе
-                # Для этого нужно найти время последнего изменения статуса
-                time_in_current_status = self._calculate_time_in_current_status(email, status, login_time_str)
+                time_in_system = self._calculate_time_since(login_time_str)
+
+                # Вычисляем время в текущем статусе (с момента смены статуса или логина)
+                time_in_current_status = self._calculate_time_since(status_timestamp or login_time_str)
                 
                 # Получаем информацию о перерыве
                 break_info = self.active_breaks.get(email, {})
@@ -465,87 +470,74 @@ class RealtimeMonitorWindow(QMainWindow):
             self.status_label.setText("🔴 Ошибка")
             self.status_label.setStyleSheet("color: #e74c3c; font-weight: bold; font-size: 12px;")
     
-    def _calculate_time_in_status(self, login_time_str: str, status: str) -> str:
-        """Вычисляет время в системе с момента залогинивания (московское время)"""
-        if not login_time_str:
-            return "00:00:00"
-        
+    def _get_current_user_statuses(self) -> Dict[str, Dict]:
+        """
+        Получает текущие рабочие статусы всех пользователей из work_log.
+        Возвращает словарь: {email: {'status': '...', 'timestamp': '...'}}
+        """
         try:
-            # Парсим время логина
-            login_time = datetime.fromisoformat(login_time_str.replace('Z', '+00:00'))
-            if login_time.tzinfo is None:
-                login_time = login_time.replace(tzinfo=datetime.now().astimezone().tzinfo)
-            
+            # Получаем записи work_log за сегодня
+            today = datetime.now().date().isoformat()
+            work_log_data = self.repo.get_work_log_data(
+                date_from=today,
+                date_to=today
+            )
+
+            # Группируем по email и находим последнюю запись со статусом
+            user_statuses = {}
+            for log_entry in work_log_data:
+                email = (log_entry.get('email') or '').lower()
+                action_type = log_entry.get('action_type', '')
+                status = log_entry.get('status', '')
+                timestamp = log_entry.get('timestamp', '')
+
+                # Ищем записи LOGIN или STATUS_CHANGE
+                if email and action_type in ('LOGIN', 'STATUS_CHANGE') and status:
+                    # Обновляем, если это более поздняя запись
+                    if email not in user_statuses or timestamp > user_statuses[email].get('timestamp', ''):
+                        user_statuses[email] = {
+                            'status': status,
+                            'timestamp': timestamp
+                        }
+
+            return user_statuses
+        except Exception as e:
+            logger.error(f"Failed to get current user statuses: {e}")
+            return {}
+
+    def _calculate_time_since(self, time_str: str) -> str:
+        """Вычисляет время с указанного момента (в московском времени)"""
+        if not time_str:
+            return "00:00:00"
+
+        try:
+            # Парсим время
+            time_dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+            if time_dt.tzinfo is None:
+                time_dt = time_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+
             # Конвертируем в московское время
-            login_time_moscow = to_moscow(login_time)
-            if not login_time_moscow:
+            time_moscow = to_moscow(time_dt)
+            if not time_moscow:
                 return "00:00:00"
-            
+
             # Текущее время в московском
             from shared.time_utils import now_moscow
             now_moscow_dt = now_moscow()
-            
+
             # Вычисляем разницу
-            delta = now_moscow_dt - login_time_moscow
-            
+            delta = now_moscow_dt - time_moscow
+
             hours = int(delta.total_seconds() // 3600)
             minutes = int((delta.total_seconds() % 3600) // 60)
             seconds = int(delta.total_seconds() % 60)
-            
+
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            
+
         except Exception as e:
-            logger.warning(f"Failed to calculate time in system: {e}")
+            logger.warning(f"Failed to calculate time since {time_str}: {e}")
             return "00:00:00"
     
-    def _calculate_time_in_current_status(self, email: str, current_status: str, login_time_str: str) -> str:
-        """Вычисляет время в текущем статусе"""
-        try:
-            # Получаем последнюю запись изменения статуса для этого пользователя
-            work_log_data = self.repo.get_work_log_data(
-                email=email,
-                date_from=datetime.now().date().isoformat(),
-                date_to=datetime.now().date().isoformat()
-            )
-            
-            # Ищем последнюю запись с текущим статусом
-            status_changes = [
-                log for log in work_log_data 
-                if log.get('status') == current_status 
-                and log.get('action_type') in ('LOGIN', 'STATUS_CHANGE')
-            ]
-            
-            if status_changes:
-                # Берем последнюю запись
-                last_change = sorted(status_changes, key=lambda x: x.get('timestamp', ''))[-1]
-                status_start_time_str = last_change.get('timestamp', '') or last_change.get('status_start_time', '')
-                
-                if status_start_time_str:
-                    # Парсим время начала статуса
-                    status_start_time = datetime.fromisoformat(status_start_time_str.replace('Z', '+00:00'))
-                    if status_start_time.tzinfo is None:
-                        status_start_time = status_start_time.replace(tzinfo=datetime.now().astimezone().tzinfo)
-                    
-                    # Конвертируем в московское время
-                    status_start_moscow = to_moscow(status_start_time)
-                    if status_start_moscow:
-                        from shared.time_utils import now_moscow
-                        now_moscow_dt = now_moscow()
-                        delta = now_moscow_dt - status_start_moscow
-                        
-                        hours = int(delta.total_seconds() // 3600)
-                        minutes = int((delta.total_seconds() % 3600) // 60)
-                        seconds = int(delta.total_seconds() % 60)
-                        
-                        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            
-            # Если не нашли, используем время логина
-            return self._calculate_time_in_status(login_time_str, current_status)
-            
-        except Exception as e:
-            logger.debug(f"Failed to calculate time in current status for {email}: {e}")
-            # Fallback на время в системе
-            return self._calculate_time_in_status(login_time_str, current_status)
     
     def _update_dashboard(self):
         """Обновляет карточки дашборда"""
