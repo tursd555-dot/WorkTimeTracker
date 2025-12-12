@@ -511,16 +511,10 @@ class RealtimeMonitorWindow(QMainWindow):
             return "00:00:00"
 
         try:
-            # Парсим время
-            time_dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-            # ИСПРАВЛЕНО: Если нет timezone, считаем что это UTC, а не локальное время
-            if time_dt.tzinfo is None:
-                from datetime import timezone
-                time_dt = time_dt.replace(tzinfo=timezone.utc)
-
-            # Конвертируем в московское время
-            time_moscow = to_moscow(time_dt)
+            # Используем to_moscow для парсинга и конвертации - она правильно обрабатывает все случаи
+            time_moscow = to_moscow(time_str)
             if not time_moscow:
+                logger.warning(f"to_moscow returned None for: {time_str}")
                 return "00:00:00"
 
             # Текущее время в московском
@@ -530,6 +524,11 @@ class RealtimeMonitorWindow(QMainWindow):
             # Вычисляем разницу
             delta = now_moscow_dt - time_moscow
 
+            # Защита от отрицательных значений (на случай проблем с часовыми поясами)
+            if delta.total_seconds() < 0:
+                logger.error(f"Negative time delta! now={now_moscow_dt.isoformat()}, time={time_moscow.isoformat()}, original={time_str}")
+                return "00:00:00"
+
             hours = int(delta.total_seconds() // 3600)
             minutes = int((delta.total_seconds() % 3600) // 60)
             seconds = int(delta.total_seconds() % 60)
@@ -537,7 +536,7 @@ class RealtimeMonitorWindow(QMainWindow):
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
         except Exception as e:
-            logger.warning(f"Failed to calculate time since {time_str}: {e}")
+            logger.error(f"Failed to calculate time since {time_str}: {e}", exc_info=True)
             return "00:00:00"
     
     
