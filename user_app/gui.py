@@ -222,7 +222,9 @@ class EmployeeApp(QWidget):
                         status_end_time=None,
                         reason=None
                     )
-                self.status_start_time = datetime.fromisoformat(now)
+                # ИСПРАВЛЕНО: Используем локальное время для UI (убираем timezone)
+                # now - это UTC строка, но для UI нужно локальное время без timezone
+                self.status_start_time = datetime.now()
                 self._send_action_to_sheets(record_id)
         except Exception as e:
             logger.error(f"Ошибка инициализации БД: {e}")
