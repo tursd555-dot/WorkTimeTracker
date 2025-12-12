@@ -513,8 +513,10 @@ class RealtimeMonitorWindow(QMainWindow):
         try:
             # Парсим время
             time_dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+            # ИСПРАВЛЕНО: Если нет timezone, считаем что это UTC, а не локальное время
             if time_dt.tzinfo is None:
-                time_dt = time_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+                from datetime import timezone
+                time_dt = time_dt.replace(tzinfo=timezone.utc)
 
             # Конвертируем в московское время
             time_moscow = to_moscow(time_dt)
