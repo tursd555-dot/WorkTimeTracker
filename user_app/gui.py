@@ -59,6 +59,7 @@ class EmployeeApp(QWidget):
         self.telegram_login = telegram_login
         self.on_logout_callback = on_logout_callback
 
+        # Инициализация с значениями по умолчанию
         self.current_status = "В работе"
         self.status_start_time = datetime.now()
         self.shift_start_time = datetime.now()
@@ -189,6 +190,87 @@ class EmployeeApp(QWidget):
                 logger.error(f"Failed to initialize break system: {e}")
                 self.break_mgr = None
             
+            # ИСПРАВЛЕНИЕ: Получаем login_time из активной сессии для расчета времени с момента входа
+            # Это нужно только если это продолжение существующей сессии
+            if self._continue_existing_session:
+                try:
+                    api = get_sheets_api()
+                    active_session = api.get_active_session(self.email)
+                    if active_session:
+                        login_time_str = active_session.get('LoginTime', '')
+                        if login_time_str:
+                            try:
+                                # Парсим login_time (может быть в разных форматах)
+                                if 'T' in login_time_str:
+                                    login_dt = datetime.fromisoformat(login_time_str.replace('Z', '+00:00'))
+                                else:
+                                    login_dt = datetime.strptime(login_time_str[:19], '%Y-%m-%d %H:%M:%S')
+                                    if login_dt.tzinfo is None:
+                                        from datetime import timezone
+                                        login_dt = login_dt.replace(tzinfo=timezone.utc)
+                                
+                                # Преобразуем в локальное время без timezone для сравнения
+                                if login_dt.tzinfo:
+                                    login_dt = login_dt.replace(tzinfo=None)
+                                
+                                self.shift_start_time = login_dt
+                                logger.info(f"Восстановлено время входа из активной сессии: {self.shift_start_time}")
+                            except Exception as e:
+                                logger.warning(f"Не удалось распарсить login_time '{login_time_str}': {e}")
+                except Exception as e:
+                    logger.warning(f"Не удалось получить активную сессию для восстановления времени входа: {e}")
+            
+            # ИСПРАВЛЕНИЕ: Получаем последний статус из БД для текущей сессии
+            if self._continue_existing_session:
+                try:
+                    last_status = self.db.get_last_status_for_session(self.email, self.session_id)
+                    if last_status:
+                        status = last_status.get('status')
+                        status_start_time_str = last_status.get('status_start_time')
+                        if status:
+                            self.current_status = status
+                            logger.info(f"Восстановлен статус из БД: {self.current_status}")
+                        if status_start_time_str:
+                            try:
+                                if 'T' in status_start_time_str:
+                                    status_dt = datetime.fromisoformat(status_start_time_str.replace('Z', '+00:00'))
+                                else:
+                                    status_dt = datetime.strptime(status_start_time_str[:19], '%Y-%m-%d %H:%M:%S')
+                                    if status_dt.tzinfo is None:
+                                        from datetime import timezone
+                                        status_dt = status_dt.replace(tzinfo=timezone.utc)
+                                
+                                # Преобразуем в локальное время без timezone
+                                if status_dt.tzinfo:
+                                    status_dt = status_dt.replace(tzinfo=None)
+                                
+                                self.status_start_time = status_dt
+                                logger.info(f"Восстановлено время начала статуса из БД: {self.status_start_time}")
+                            except Exception as e:
+                                logger.warning(f"Не удалось распарсить status_start_time '{status_start_time_str}': {e}")
+                    
+                    # Также получаем login_time из БД для этой сессии
+                    login_time_str = self.db.get_login_time_for_session(self.email, self.session_id)
+                    if login_time_str:
+                        try:
+                            if 'T' in login_time_str:
+                                login_dt = datetime.fromisoformat(login_time_str.replace('Z', '+00:00'))
+                            else:
+                                login_dt = datetime.strptime(login_time_str[:19], '%Y-%m-%d %H:%M:%S')
+                                if login_dt.tzinfo is None:
+                                    from datetime import timezone
+                                    login_dt = login_dt.replace(tzinfo=timezone.utc)
+                            
+                            if login_dt.tzinfo:
+                                login_dt = login_dt.replace(tzinfo=None)
+                            
+                            self.shift_start_time = login_dt
+                            logger.info(f"Восстановлено время входа из БД: {self.shift_start_time}")
+                        except Exception as e:
+                            logger.warning(f"Не удалось распарсить login_time из БД '{login_time_str}': {e}")
+                except Exception as e:
+                    logger.warning(f"Не удалось восстановить статус из БД: {e}")
+            
             if self.login_was_performed:
                 now = datetime.now().isoformat()
                 has_session = bool(self._continue_existing_session)
@@ -204,6 +286,10 @@ class EmployeeApp(QWidget):
                         self.session_id,
                         now
                     )
+                    # Устанавливаем shift_start_time при новом логине (не продолжение сессии)
+                    if not self._continue_existing_session:
+                        self.shift_start_time = datetime.now()
+                        logger.info(f"Установлено время входа для нового логина: {self.shift_start_time}")
                 
                 # ИСПРАВЛЕНИЕ: Используем write_tx напрямую
                 from user_app.db_local import write_tx
@@ -220,7 +306,9 @@ class EmployeeApp(QWidget):
                         status_end_time=None,
                         reason=None
                     )
-                self.status_start_time = datetime.fromisoformat(now)
+                # Обновляем status_start_time только если это новый статус
+                if not self._continue_existing_session or not self.db.get_last_status_for_session(self.email, self.session_id):
+                    self.status_start_time = datetime.fromisoformat(now)
                 self._send_action_to_sheets(record_id)
         except Exception as e:
             logger.error(f"Ошибка инициализации БД: {e}")
@@ -267,7 +355,7 @@ class EmployeeApp(QWidget):
         self.time_label.setStyleSheet("font-size: 14px;")
         main_layout.addWidget(self.time_label)
 
-        self.shift_timer_label = QLabel("⏰ Время смены: 00:00:00")
+        self.shift_timer_label = QLabel("⏰ Время с момента входа в систему: 00:00:00")
         self.shift_timer_label.setAlignment(Qt.AlignCenter)
         self.shift_timer_label.setStyleSheet("font-size: 14px; color: #0069c0;")
         main_layout.addWidget(self.shift_timer_label)
@@ -398,7 +486,7 @@ class EmployeeApp(QWidget):
         shift_str = str(shift_duration).split('.')[0]
 
         self.time_label.setText(f"⏱ Время в статусе: {status_str}")
-        self.shift_timer_label.setText(f"⏰ Время смены: {shift_str}")
+        self.shift_timer_label.setText(f"⏰ Время с момента входа в систему: {shift_str}")
 
     def _update_button_states(self):
         for status, btn in self.status_buttons.items():

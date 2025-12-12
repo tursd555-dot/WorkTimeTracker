@@ -733,6 +733,66 @@ class LocalDB:
     def get_active_session(self, email: str) -> Optional[Dict[str, Any]]:
         return self.get_last_unfinished_session(email)
 
+    def get_last_status_for_session(self, email: str, session_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Получить последний статус для указанной сессии.
+        
+        Returns:
+            Словарь с полями: status, status_start_time, action_type или None
+        """
+        self._ensure_open()
+        if self.conn is None:
+            return None
+        with self._lock:
+            with read_cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT status, status_start_time, action_type, timestamp
+                      FROM logs
+                     WHERE email=? AND session_id=?
+                       AND action_type IN ('LOGIN', 'STATUS_CHANGE')
+                       AND status_end_time IS NULL
+                  ORDER BY id DESC
+                     LIMIT 1
+                    """,
+                    (email, session_id),
+                )
+                row = cur.fetchone()
+                if row:
+                    return {
+                        'status': row[0],
+                        'status_start_time': row[1],
+                        'action_type': row[2],
+                        'timestamp': row[3]
+                    }
+                return None
+
+    def get_login_time_for_session(self, email: str, session_id: str) -> Optional[str]:
+        """
+        Получить время входа (login_time) для указанной сессии.
+        
+        Returns:
+            ISO строка с временем входа или None
+        """
+        self._ensure_open()
+        if self.conn is None:
+            return None
+        with self._lock:
+            with read_cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT status_start_time
+                      FROM logs
+                     WHERE email=? AND session_id=?
+                       AND action_type='LOGIN'
+                  ORDER BY id ASC
+                     LIMIT 1
+                    """,
+                    (email, session_id),
+                )
+                row = cur.fetchone()
+                return row[0] if row else None
+
     def get_current_user_email(self) -> Optional[str]:
         self._ensure_open()
         if self.conn is None:
