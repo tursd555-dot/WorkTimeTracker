@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, date
 import logging
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -58,10 +58,16 @@ class MonitorSettingsDialog(QDialog):
         ])
         layout.addRow("Сортировка:", self.sort_by)
         
-        # Показывать только активных
-        self.show_active_only = QCheckBox("Показывать только активных пользователей")
-        self.show_active_only.setChecked(False)
-        layout.addRow("", self.show_active_only)
+        # Фильтр по группе
+        self.group_filter_combo = QComboBox()
+        self.group_filter_combo.addItems([
+            "Все",
+            "Входящие",
+            "Запись",
+            "Стоматология",
+            "Почта"
+        ])
+        layout.addRow("Фильтр по группе:", self.group_filter_combo)
         
         # Кнопки
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -73,7 +79,7 @@ class MonitorSettingsDialog(QDialog):
         return {
             'update_interval': self.update_interval.value(),
             'sort_by': self.sort_by.currentText(),
-            'show_active_only': self.show_active_only.isChecked()
+            'group_filter': self.group_filter_combo.currentText()
         }
     
     def set_settings(self, settings: Dict):
@@ -83,7 +89,10 @@ class MonitorSettingsDialog(QDialog):
         index = self.sort_by.findText(sort_by)
         if index >= 0:
             self.sort_by.setCurrentIndex(index)
-        self.show_active_only.setChecked(settings.get('show_active_only', False))
+        group_filter = settings.get('group_filter', 'Все')
+        index = self.group_filter_combo.findText(group_filter)
+        if index >= 0:
+            self.group_filter_combo.setCurrentIndex(index)
 
 
 class RealtimeMonitorWindow(QMainWindow):
@@ -102,8 +111,17 @@ class RealtimeMonitorWindow(QMainWindow):
         self.settings = {
             'update_interval': 5,  # секунд
             'sort_by': 'По ФИО',
-            'show_active_only': False
+            'group_filter': 'Все'
         }
+        
+        # Продуктивные статусы (из config.py)
+        self.productive_statuses = {
+            'В работе', 'Чат', 'Аудио', 'Запись', 'Анкеты',
+            'Стоматология', 'Входящие', 'Почта', 'На задаче'
+        }
+        
+        # Непродуктивные статусы (отдых)
+        self.rest_statuses = {'Перерыв', 'Обед'}
         
         # Данные
         self.users_data: Dict[str, Dict] = {}
@@ -206,32 +224,22 @@ class RealtimeMonitorWindow(QMainWindow):
         
         # Дашборд (карточки статистики)
         dashboard_layout = QHBoxLayout()
-        dashboard_layout.setSpacing(15)
+        dashboard_layout.setSpacing(20)
+        
+        self.total_online_card = self._create_dashboard_card(
+            "Сейчас в системе", "0", "#3498db"
+        )
+        dashboard_layout.addWidget(self.total_online_card)
         
         self.working_now_card = self._create_dashboard_card(
             "Сейчас работают", "0", "#27ae60"
         )
         dashboard_layout.addWidget(self.working_now_card)
         
-        self.on_break_card = self._create_dashboard_card(
-            "В перерыве", "0", "#f39c12"
+        self.resting_now_card = self._create_dashboard_card(
+            "Сейчас отдыхают", "0", "#f39c12"
         )
-        dashboard_layout.addWidget(self.on_break_card)
-        
-        self.on_lunch_card = self._create_dashboard_card(
-            "На обеде", "0", "#e67e22"
-        )
-        dashboard_layout.addWidget(self.on_lunch_card)
-        
-        self.over_limit_card = self._create_dashboard_card(
-            "Превышают лимит", "0", "#e74c3c"
-        )
-        dashboard_layout.addWidget(self.over_limit_card)
-        
-        self.total_card = self._create_dashboard_card(
-            "Всего активных", "0", "#3498db"
-        )
-        dashboard_layout.addWidget(self.total_card)
+        dashboard_layout.addWidget(self.resting_now_card)
         
         main_layout.addLayout(dashboard_layout)
         
@@ -241,45 +249,39 @@ class RealtimeMonitorWindow(QMainWindow):
         line2.setFrameShadow(QFrame.Sunken)
         main_layout.addWidget(line2)
         
-        # Фильтры
-        filters_layout = QHBoxLayout()
-        filters_layout.addWidget(QLabel("Группа:"))
-        
-        self.group_filter = QComboBox()
-        self.group_filter.addItem("Все группы")
-        self.group_filter.currentTextChanged.connect(self._apply_filters)
-        filters_layout.addWidget(self.group_filter)
-        
-        filters_layout.addWidget(QLabel("Статус:"))
-        
-        self.status_filter = QComboBox()
-        self.status_filter.addItem("Все статусы")
-        self.status_filter.currentTextChanged.connect(self._apply_filters)
-        filters_layout.addWidget(self.status_filter)
-        
-        filters_layout.addStretch()
-        main_layout.addLayout(filters_layout)
+        # Фильтры (убраны, теперь в настройках)
         
         # Таблица мониторинга
         table_group = QGroupBox("Статусы пользователей")
         table_layout = QVBoxLayout()
         
         self.monitor_table = QTableWidget()
-        self.monitor_table.setColumnCount(7)
+        self.monitor_table.setColumnCount(5)
         self.monitor_table.setHorizontalHeaderLabels([
-            "Сотрудник", "Группа", "Статус", "Время в статусе", 
-            "Перерыв/Обед", "Время перерыва", "Предупреждение"
+            "Сотрудник", "Группа", "Текущий статус", 
+            "Время в системе", "Время в текущем статусе"
         ])
+        
+        # Увеличиваем размер шрифта для таблицы
+        header_font = QFont()
+        header_font.setPointSize(12)
+        header_font.setBold(True)
+        self.monitor_table.horizontalHeader().setFont(header_font)
+        
+        table_font = QFont()
+        table_font.setPointSize(11)
+        self.monitor_table.setFont(table_font)
         
         # Настройка таблицы
         header = self.monitor_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.Stretch)
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(6, QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.Stretch)
+        
+        # Увеличиваем высоту строк
+        self.monitor_table.verticalHeader().setDefaultSectionSize(40)
         
         self.monitor_table.setAlternatingRowColors(True)
         self.monitor_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -316,19 +318,27 @@ class RealtimeMonitorWindow(QMainWindow):
         
         value_label = QLabel(value)
         value_font = QFont()
-        value_font.setPointSize(28)
+        value_font.setPointSize(32)
         value_font.setBold(True)
         value_label.setFont(value_font)
         value_label.setAlignment(Qt.AlignCenter)
         value_label.setStyleSheet(f"color: {color};")
         layout.addWidget(value_label)
         
+        # Подзаголовок
+        subtitle_label = QLabel("чел.")
+        subtitle_font = QFont()
+        subtitle_font.setPointSize(10)
+        subtitle_label.setFont(subtitle_font)
+        subtitle_label.setAlignment(Qt.AlignCenter)
+        subtitle_label.setStyleSheet("color: #7f8c8d;")
+        layout.addWidget(subtitle_label)
+        
         card.setLayout(layout)
         card.setMinimumHeight(100)
         card.setMinimumWidth(200)
         
-        # Сохраняем ссылку на label для обновления
-        setattr(self, f"{title.lower().replace(' ', '_').replace('/', '_')}_value", value_label)
+        # Не сохраняем ссылку, будем искать через findChildren
         
         return card
     
@@ -385,8 +395,12 @@ class RealtimeMonitorWindow(QMainWindow):
                 status = session.get('Status', 'Неизвестно')
                 login_time_str = session.get('LoginTime', '')
                 
-                # Вычисляем время в статусе
-                time_in_status = self._calculate_time_in_status(login_time_str, status)
+                # Вычисляем время в системе (с момента залогинивания)
+                time_in_system = self._calculate_time_in_status(login_time_str, status)
+                
+                # Вычисляем время в текущем статусе
+                # Для этого нужно найти время последнего изменения статуса
+                time_in_current_status = self._calculate_time_in_current_status(email, status, login_time_str)
                 
                 # Получаем информацию о перерыве
                 break_info = self.active_breaks.get(email, {})
@@ -394,12 +408,8 @@ class RealtimeMonitorWindow(QMainWindow):
                 break_start = break_info.get('StartTime', '')
                 break_duration = break_info.get('Duration', 0)
                 
-                # Получаем лимит из графика пользователя
-                break_limit = 15  # Default для перерыва
-                if break_type == 'Обед':
-                    break_limit = 60
-                elif break_type == 'Перерыв':
-                    break_limit = 15
+                # Лимиты: обед 60 мин, перерыв 15 мин
+                break_limit = 60 if break_type == 'Обед' else 15 if break_type == 'Перерыв' else 0
                 
                 # Пытаемся получить лимит из графика пользователя
                 try:
@@ -412,7 +422,8 @@ class RealtimeMonitorWindow(QMainWindow):
                 except Exception as e:
                     logger.debug(f"Failed to get schedule limit for {email}: {e}")
                 
-                is_over_limit = break_info.get('is_over_limit', False)
+                # Проверяем превышение лимита
+                is_over_limit = break_duration > break_limit if break_limit > 0 else False
                 
                 self.users_data[email] = {
                     'email': email,
@@ -420,7 +431,8 @@ class RealtimeMonitorWindow(QMainWindow):
                     'group': user.get('Group', 'Без группы'),
                     'status': status,
                     'login_time': login_time_str,
-                    'time_in_status': time_in_status,
+                    'time_in_system': time_in_system,
+                    'time_in_current_status': time_in_current_status,
                     'break_type': break_type,
                     'break_start': break_start,
                     'break_duration': break_duration,
@@ -432,7 +444,6 @@ class RealtimeMonitorWindow(QMainWindow):
             # Обновляем интерфейс
             self._update_dashboard()
             self._update_table()
-            self._update_filters()
             
             # Обновляем время последнего обновления (московское)
             self.last_update_time = datetime.now()
@@ -445,7 +456,7 @@ class RealtimeMonitorWindow(QMainWindow):
             self.status_label.setStyleSheet("color: #e74c3c; font-weight: bold; font-size: 12px;")
     
     def _calculate_time_in_status(self, login_time_str: str, status: str) -> str:
-        """Вычисляет время пребывания в статусе (московское время)"""
+        """Вычисляет время в системе с момента залогинивания (московское время)"""
         if not login_time_str:
             return "00:00:00"
         
@@ -474,66 +485,101 @@ class RealtimeMonitorWindow(QMainWindow):
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
             
         except Exception as e:
-            logger.warning(f"Failed to calculate time in status: {e}")
+            logger.warning(f"Failed to calculate time in system: {e}")
             return "00:00:00"
+    
+    def _calculate_time_in_current_status(self, email: str, current_status: str, login_time_str: str) -> str:
+        """Вычисляет время в текущем статусе"""
+        try:
+            # Получаем последнюю запись изменения статуса для этого пользователя
+            work_log_data = self.repo.get_work_log_data(
+                email=email,
+                date_from=datetime.now().date().isoformat(),
+                date_to=datetime.now().date().isoformat()
+            )
+            
+            # Ищем последнюю запись с текущим статусом
+            status_changes = [
+                log for log in work_log_data 
+                if log.get('status') == current_status 
+                and log.get('action_type') in ('LOGIN', 'STATUS_CHANGE')
+            ]
+            
+            if status_changes:
+                # Берем последнюю запись
+                last_change = sorted(status_changes, key=lambda x: x.get('timestamp', ''))[-1]
+                status_start_time_str = last_change.get('timestamp', '') or last_change.get('status_start_time', '')
+                
+                if status_start_time_str:
+                    # Парсим время начала статуса
+                    status_start_time = datetime.fromisoformat(status_start_time_str.replace('Z', '+00:00'))
+                    if status_start_time.tzinfo is None:
+                        status_start_time = status_start_time.replace(tzinfo=datetime.now().astimezone().tzinfo)
+                    
+                    # Конвертируем в московское время
+                    status_start_moscow = to_moscow(status_start_time)
+                    if status_start_moscow:
+                        from shared.time_utils import now_moscow
+                        now_moscow_dt = now_moscow()
+                        delta = now_moscow_dt - status_start_moscow
+                        
+                        hours = int(delta.total_seconds() // 3600)
+                        minutes = int((delta.total_seconds() % 3600) // 60)
+                        seconds = int(delta.total_seconds() % 60)
+                        
+                        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            
+            # Если не нашли, используем время логина
+            return self._calculate_time_in_status(login_time_str, current_status)
+            
+        except Exception as e:
+            logger.debug(f"Failed to calculate time in current status for {email}: {e}")
+            # Fallback на время в системе
+            return self._calculate_time_in_status(login_time_str, current_status)
     
     def _update_dashboard(self):
         """Обновляет карточки дашборда"""
-        # Сейчас работают (активные сессии, не в перерыве/обеде)
-        working_now = len([
-            u for u in self.users_data.values() 
-            if u['status'] not in ('finished', 'completed', 'kicked') 
-            and not u['break_type']
-        ])
-        
-        # В перерыве
-        on_break = len([
-            u for u in self.users_data.values() 
-            if u['break_type'] == 'Перерыв'
-        ])
-        
-        # На обеде
-        on_lunch = len([
-            u for u in self.users_data.values() 
-            if u['break_type'] == 'Обед'
-        ])
-        
-        # Превышают лимит
-        over_limit = len([
-            u for u in self.users_data.values() 
-            if u['is_over_limit']
-        ])
-        
-        # Всего активных
-        total_active = len([
+        # Всего в системе (активные сессии)
+        total_online = len([
             u for u in self.users_data.values() 
             if u['status'] not in ('finished', 'completed', 'kicked')
         ])
         
-        self.working_now_card.findChild(QLabel).setText(str(working_now))
-        self.on_break_card.findChild(QLabel).setText(str(on_break))
-        self.on_lunch_card.findChild(QLabel).setText(str(on_lunch))
-        self.over_limit_card.findChild(QLabel).setText(str(over_limit))
-        self.total_card.findChild(QLabel).setText(str(total_active))
+        # Сейчас работают (продуктивные статусы)
+        working_now = len([
+            u for u in self.users_data.values() 
+            if u['status'] in self.productive_statuses
+            and u['status'] not in ('finished', 'completed', 'kicked')
+        ])
+        
+        # Сейчас отдыхают (перерыв или обед)
+        resting_now = len([
+            u for u in self.users_data.values() 
+            if u['status'] in self.rest_statuses or u['break_type'] in self.rest_statuses
+        ])
+        
+        # Обновляем карточки (берем первый QLabel - это значение)
+        total_label = self.total_online_card.findChildren(QLabel)[0]
+        total_label.setText(str(total_online))
+        
+        working_label = self.working_now_card.findChildren(QLabel)[0]
+        working_label.setText(str(working_now))
+        
+        resting_label = self.resting_now_card.findChildren(QLabel)[0]
+        resting_label.setText(str(resting_now))
     
     def _update_table(self):
         """Обновляет таблицу мониторинга"""
         # Фильтруем данные
         filtered_data = list(self.users_data.values())
         
-        # Фильтр по группе
-        selected_group = self.group_filter.currentText()
-        if selected_group != "Все группы":
+        # Фильтр по группе из настроек
+        selected_group = self.settings.get('group_filter', 'Все')
+        if selected_group != "Все":
             filtered_data = [u for u in filtered_data if u['group'] == selected_group]
         
-        # Фильтр по статусу
-        selected_status = self.status_filter.currentText()
-        if selected_status != "Все статусы":
-            filtered_data = [u for u in filtered_data if u['status'] == selected_status]
-        
-        # Фильтр "только активные"
-        if self.settings['show_active_only']:
-            filtered_data = [u for u in filtered_data if u['status'] not in ('finished', 'completed', 'kicked')]
+        # Только активные (исключаем завершенные сессии)
+        filtered_data = [u for u in filtered_data if u['status'] not in ('finished', 'completed', 'kicked')]
         
         # Сортировка согласно настройкам
         sort_by = self.settings.get('sort_by', 'По ФИО')
@@ -550,70 +596,70 @@ class RealtimeMonitorWindow(QMainWindow):
         self.monitor_table.setRowCount(len(filtered_data))
         
         for row, user_data in enumerate(filtered_data):
-            # Сотрудник
+            # Сотрудник (крупный шрифт)
             name_item = QTableWidgetItem(user_data['name'])
             name_item.setData(Qt.UserRole, user_data['email'])
+            name_font = QFont()
+            name_font.setPointSize(11)
+            name_font.setBold(True)
+            name_item.setFont(name_font)
             self.monitor_table.setItem(row, 0, name_item)
             
             # Группа
             group_item = QTableWidgetItem(user_data['group'])
+            group_font = QFont()
+            group_font.setPointSize(11)
+            group_item.setFont(group_font)
             self.monitor_table.setItem(row, 1, group_item)
             
-            # Статус с цветовой индикацией
+            # Текущий статус с цветовой индикацией
             status = user_data['status']
-            status_item = QTableWidgetItem(status)
-            status_color = self._get_status_color(status)
-            status_item.setForeground(QColor(status_color))
-            status_item.setFont(QFont("Arial", 10, QFont.Bold))
+            break_type = user_data['break_type']
+            break_duration = user_data['break_duration']
+            break_limit = user_data['break_limit']
+            is_over_limit = user_data['is_over_limit']
+            
+            # Формируем текст статуса
+            if break_type:
+                status_text = f"{status} ({break_type})"
+            else:
+                status_text = status
+            
+            status_item = QTableWidgetItem(status_text)
+            status_font = QFont()
+            status_font.setPointSize(11)
+            status_font.setBold(True)
+            status_item.setFont(status_font)
+            
+            # Цветовая индикация: красный если превышен лимит перерыва/обеда
+            if is_over_limit:
+                status_item.setForeground(QColor("#e74c3c"))
+                status_item.setBackground(QColor("#ffebee"))  # Светло-красный фон
+            else:
+                status_color = self._get_status_color(status)
+                status_item.setForeground(QColor(status_color))
+            
             self.monitor_table.setItem(row, 2, status_item)
             
-            # Время в статусе (московское)
-            time_item = QTableWidgetItem(user_data['time_in_status'])
-            self.monitor_table.setItem(row, 3, time_item)
+            # Время в системе (московское)
+            time_in_system_item = QTableWidgetItem(user_data['time_in_system'])
+            time_font = QFont()
+            time_font.setPointSize(11)
+            time_font.setFamily("Courier")  # Моноширинный для времени
+            time_in_system_item.setFont(time_font)
+            self.monitor_table.setItem(row, 3, time_in_system_item)
             
-            # Перерыв/Обед
-            break_type = user_data['break_type']
-            if break_type:
-                break_item = QTableWidgetItem(break_type)
-                break_item.setForeground(QColor("#f39c12"))
-                break_item.setFont(QFont("Arial", 10, QFont.Bold))
-            else:
-                break_item = QTableWidgetItem("—")
-            self.monitor_table.setItem(row, 4, break_item)
+            # Время в текущем статусе (московское)
+            time_in_status_item = QTableWidgetItem(user_data['time_in_current_status'])
+            time_in_status_item.setFont(time_font)
             
-            # Время перерыва (московское)
-            if break_type and user_data['break_start']:
-                break_start_moscow = format_time_moscow(user_data['break_start'], '%H:%M')
-                break_duration = user_data['break_duration']
-                break_limit = user_data['break_limit']
-                break_time_text = f"{break_start_moscow} ({break_duration}/{break_limit} мин)"
-                
-                break_time_item = QTableWidgetItem(break_time_text)
-                if user_data['is_over_limit']:
-                    break_time_item.setForeground(QColor("#e74c3c"))
-                    break_time_item.setFont(QFont("Arial", 10, QFont.Bold))
-                else:
-                    break_time_item.setForeground(QColor("#f39c12"))
-            else:
-                break_time_item = QTableWidgetItem("—")
-            self.monitor_table.setItem(row, 5, break_time_item)
+            # Если превышен лимит перерыва/обеда, подсвечиваем красным
+            if is_over_limit:
+                time_in_status_item.setForeground(QColor("#e74c3c"))
+                time_in_status_item.setBackground(QColor("#ffebee"))
+                time_in_status_item.setFont(QFont("Courier", 11, QFont.Bold))
             
-            # Предупреждение
-            warning_text = ""
-            warning_color = None
-            if user_data['is_over_limit']:
-                overage = user_data['break_duration'] - user_data['break_limit']
-                warning_text = f"⚠️ Превышен лимит на {overage} мин"
-                warning_color = QColor("#e74c3c")
-            elif break_type and user_data['break_duration'] >= user_data['break_limit'] - 2:
-                warning_text = "⏰ Скоро закончится"
-                warning_color = QColor("#f39c12")
-            
-            warning_item = QTableWidgetItem(warning_text)
-            if warning_color:
-                warning_item.setForeground(warning_color)
-                warning_item.setFont(QFont("Arial", 9, QFont.Bold))
-            self.monitor_table.setItem(row, 6, warning_item)
+            self.monitor_table.setItem(row, 4, time_in_status_item)
         
         # Обновляем статус
         self.status_label.setText("🟢 Активен")
@@ -635,36 +681,8 @@ class RealtimeMonitorWindow(QMainWindow):
         return status_colors.get(status, '#34495e')
     
     def _update_filters(self):
-        """Обновляет списки фильтров"""
-        # Группы
-        current_group = self.group_filter.currentText()
-        groups = set(u['group'] for u in self.users_data.values())
-        self.group_filter.clear()
-        self.group_filter.addItem("Все группы")
-        for group in sorted(groups):
-            self.group_filter.addItem(group)
-        
-        # Восстанавливаем выбор
-        index = self.group_filter.findText(current_group)
-        if index >= 0:
-            self.group_filter.setCurrentIndex(index)
-        
-        # Статусы
-        current_status = self.status_filter.currentText()
-        statuses = set(u['status'] for u in self.users_data.values())
-        self.status_filter.clear()
-        self.status_filter.addItem("Все статусы")
-        for status in sorted(statuses):
-            self.status_filter.addItem(status)
-        
-        # Восстанавливаем выбор
-        index = self.status_filter.findText(current_status)
-        if index >= 0:
-            self.status_filter.setCurrentIndex(index)
-    
-    def _apply_filters(self):
-        """Применяет фильтры"""
-        self._update_table()
+        """Обновляет списки фильтров (не используется, фильтры в настройках)"""
+        pass
     
     def _open_settings(self):
         """Открывает диалог настроек"""

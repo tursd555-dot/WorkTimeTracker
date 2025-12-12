@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """
-Скрипт запуска отдельного приложения мониторинга статусов
-
-Использование:
-    python run_monitor.py
+Скрипт запуска отдельного приложения мониторинга статусов в реальном времени
 """
 import sys
 from pathlib import Path
 
+# Добавляем корневую директорию проекта в путь
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
