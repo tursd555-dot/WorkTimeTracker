@@ -38,6 +38,7 @@ from admin_app.notifications_panel import open_panel as open_notifications_panel
 # --- Менеджер перерывов ---
 from admin_app.break_manager import BreakManager
 from admin_app.break_analytics_tab import BreakAnalyticsTab
+from shared.time_utils import format_datetime_moscow
 
 # Инициализация логирования до запуска GUI (совместимо и со старой сигнатурой)
 try:
@@ -142,6 +143,16 @@ class AdminWindow(QMainWindow):
 
         # Менеджер перерывов
         self.break_mgr = BreakManager(self.repo.sheets)
+        
+        # Сервис мониторинга перерывов для уведомлений
+        try:
+            from admin_app.break_monitor_service import BreakMonitorService
+            self.break_monitor = BreakMonitorService(self.break_mgr)
+            self.break_monitor.start()
+            logger.info("Break monitor service started")
+        except Exception as e:
+            logger.warning(f"Failed to start break monitor service: {e}")
+            self.break_monitor = None
 
         # Кэш пользователей и активных e-mail
         self.users: List[Dict[str, str]] = []
@@ -825,7 +836,9 @@ class AdminWindow(QMainWindow):
             
             row = self.violations_table.rowCount()
             self.violations_table.insertRow(row)
-            self.violations_table.setItem(row, 0, QTableWidgetItem(v.get("Timestamp", "")))
+            timestamp = v.get("Timestamp", "")
+            timestamp_formatted = format_datetime_moscow(timestamp) if timestamp else ""
+            self.violations_table.setItem(row, 0, QTableWidgetItem(timestamp_formatted))
             self.violations_table.setItem(row, 1, QTableWidgetItem(v.get("Email", "")))
             self.violations_table.setItem(row, 2, QTableWidgetItem(v.get("ViolationType", "")))
             self.violations_table.setItem(row, 3, QTableWidgetItem(v.get("Details", "")))

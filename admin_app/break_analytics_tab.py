@@ -20,6 +20,13 @@ from PyQt5.QtCore import Qt, QDate, QTimer
 from PyQt5.QtGui import QFont, QColor
 from datetime import datetime, timedelta, date
 import logging
+import sys
+from pathlib import Path
+
+# Добавляем путь к shared модулям
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from shared.time_utils import format_datetime_moscow, format_time_moscow
 
 logger = logging.getLogger(__name__)
 
@@ -528,9 +535,10 @@ class BreakAnalyticsTab(QWidget):
         self.violations_table.setRowCount(len(violations))
         
         for row, violation in enumerate(violations):
-            # Дата/Время
+            # Дата/Время в московском времени (UTC+3)
             timestamp = violation.get("Timestamp", "")
-            self.violations_table.setItem(row, 0, QTableWidgetItem(timestamp))
+            timestamp_formatted = format_datetime_moscow(timestamp) if timestamp else ""
+            self.violations_table.setItem(row, 0, QTableWidgetItem(timestamp_formatted))
             
             # Сотрудник
             email = violation.get("Email", "")
@@ -626,7 +634,9 @@ class BreakAnalyticsTab(QWidget):
             
             # Данные
             for row, violation in enumerate(violations, 2):
-                ws.cell(row=row, column=1, value=violation.get("Timestamp", ""))
+                timestamp = violation.get("Timestamp", "")
+                timestamp_formatted = format_datetime_moscow(timestamp) if timestamp else ""
+                ws.cell(row=row, column=1, value=timestamp_formatted)
                 ws.cell(row=row, column=2, value=violation.get("Email", ""))
                 
                 details = violation.get("Details", "")
@@ -678,7 +688,7 @@ class BreakAnalyticsTab(QWidget):
 
 ═══════════════════════════════════════
 
-Отчёт сгенерирован: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Отчёт сгенерирован: {format_datetime_moscow(datetime.now())}
             """.strip()
         
         out_of_window = len([v for v in violations if v.get("ViolationType") == "OUT_OF_WINDOW"])
@@ -709,7 +719,7 @@ class BreakAnalyticsTab(QWidget):
 
 ═══════════════════════════════════════
 
-Отчёт сгенерирован: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Отчёт сгенерирован: {format_datetime_moscow(datetime.now())}
         """
         
         return report.strip()
@@ -785,7 +795,9 @@ class BreakAnalyticsTab(QWidget):
             email = br.get('Email', 'N/A')
             name = br.get('Name', 'N/A')
             break_type = br.get('BreakType', 'N/A')
-            start = br.get('StartTime', 'N/A')
+            start_time_raw = br.get('StartTime', 'N/A')
+            # Форматируем время начала в московское (UTC+3)
+            start = format_datetime_moscow(start_time_raw) if start_time_raw != 'N/A' else 'N/A'
             duration = br.get('Duration', 0)
             is_over = br.get('is_over_limit', False)
             is_violator = br.get('is_violator', False)
@@ -855,7 +867,9 @@ class BreakAnalyticsTab(QWidget):
             email = br.get('Email', 'N/A')
             name = br.get('Name', 'N/A')
             break_type = br.get('BreakType', 'N/A')
-            start = br.get('StartTime', 'N/A')
+            start_time_raw = br.get('StartTime', 'N/A')
+            # Форматируем время начала в московское (UTC+3)
+            start = format_datetime_moscow(start_time_raw) if start_time_raw != 'N/A' else 'N/A'
             duration = br.get('Duration', 0)
             
             # Вычисляем превышение

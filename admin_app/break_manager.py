@@ -22,6 +22,13 @@ import logging
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, time, date
 from dataclasses import dataclass
+import sys
+from pathlib import Path
+
+# Добавляем путь к shared модулям
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from shared.time_utils import format_time_moscow, to_moscow
 
 logger = logging.getLogger(__name__)
 
@@ -776,17 +783,17 @@ class BreakManager:
                     details=f"Превышен дневной лимит {break_type}: {today_count+1}/{limit.daily_count}"
                 )
                 
-                # Отправить уведомление
+                # Отправить уведомление в группу (одно за нарушение)
                 try:
-                    from shared.break_notifications import send_quota_exceeded_notification
+                    from shared.break_notifications_v2 import send_quota_exceeded_notification
                     send_quota_exceeded_notification(
                         email=email,
                         break_type=break_type,
                         used_count=today_count + 1,
                         limit_count=limit.daily_count
                     )
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Failed to send quota notification: {e}")
                 
                 # НЕ блокируем - продолжаем начинать перерыв
                 logger.warning(f"Quota exceeded for {email}, but allowing break (violation logged)")
@@ -816,7 +823,7 @@ class BreakManager:
                 in_window=in_window
             )
             
-            # 6. Если вне окна - фиксируем нарушение (WARNING уровень, т.к. это более серьезно)
+            # 6. Если вне окна - фиксируем нарушение и отправляем уведомление в группу
             if not in_window:
                 self._log_violation(
                     email=email,
@@ -891,7 +898,8 @@ class BreakManager:
             
             # 4. Проверить превышение
             overtime = duration - limit
-            if overtime > self.OVERTIME_THRESHOLD:
+            # Уведомление при превышении на 1+ минуту (изменено с OVERTIME_THRESHOLD)
+            if overtime >= 1:
                 # Критическое нарушение
                 self._log_violation(
                     email=email,
@@ -901,9 +909,9 @@ class BreakManager:
                     details=f"Превышен лимит на {overtime} мин ({duration}/{limit})"
                 )
                 
-                # Отправить уведомления
+                # Отправить уведомления (новая система с дебаунсингом)
                 try:
-                    from shared.break_notifications import send_overtime_notification
+                    from shared.break_notifications_v2 import send_overtime_notification
                     send_overtime_notification(
                         email=email,
                         break_type=break_type,
@@ -975,9 +983,12 @@ class BreakManager:
                 if active:
                     start_time = datetime.fromisoformat(active["StartTime"])
                     duration = int((datetime.now() - start_time).total_seconds() / 60)
+                    # Конвертируем время начала в московское для отображения в интерфейсе
+                    start_time_moscow = to_moscow(start_time)
+                    start_time_formatted = start_time_moscow.strftime("%H:%M") if start_time_moscow else start_time.strftime("%H:%M")
                     active_break = {
                         "break_type": break_type,
-                        "start_time": start_time.strftime("%H:%M"),
+                        "start_time": start_time_formatted,
                         "duration": duration,
                         "limit": int(active.get("ExpectedDuration", "15"))
                     }

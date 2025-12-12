@@ -26,6 +26,21 @@ from typing import List, Dict, Optional, Any
 from collections import defaultdict
 import logging
 import json
+import sys
+from pathlib import Path
+
+# Добавляем путь к shared модулям
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from shared.time_utils import format_datetime_moscow
+
+# Для экспорта в Excel
+try:
+    import openpyxl
+    from openpyxl.utils import get_column_letter
+    EXCEL_AVAILABLE = True
+except ImportError:
+    EXCEL_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -1355,7 +1370,7 @@ class ReportsTab(QWidget):
             dialog.setText(f"Найдено нарушений: {len(violations)}")
             
             details_text = "\n".join([
-                f"{v.get('Timestamp', '')[:19]}: {v.get('ViolationType', '')} - {v.get('Details', '')}"
+                f"{format_datetime_moscow(v.get('Timestamp', ''))}: {v.get('ViolationType', '')} - {v.get('Details', '')}"
                 for v in violations[:20]  # Показываем первые 20
             ])
             
@@ -1545,17 +1560,6 @@ class ReportsTab(QWidget):
             # Заполняем таблицу
             self.login_logout_table.setRowCount(len(sessions))
             
-            # Получаем локальный часовой пояс для преобразования времени
-            try:
-                from datetime import timezone as tz
-                local_tz = datetime.now().astimezone().tzinfo
-                test_dt = datetime.now(tz.utc)
-                local_dt = test_dt.astimezone(local_tz)
-                offset = local_dt.utcoffset()
-                local_offset_hours = offset.total_seconds() / 3600
-            except:
-                local_offset_hours = 3  # По умолчанию UTC+3 для Москвы
-            
             for row, session in enumerate(sessions):
                 login_time = session['login_time']
                 logout_time = session['logout_time'] or "В процессе..."
@@ -1570,38 +1574,9 @@ class ReportsTab(QWidget):
                 else:
                     status_display = login_status
                 
-                # Форматируем время с преобразованием в локальное
-                try:
-                    if login_time:
-                        if 'T' in login_time:
-                            login_dt_utc = datetime.fromisoformat(login_time.replace('Z', '+00:00'))
-                            if login_dt_utc.tzinfo is None:
-                                login_dt_utc = login_dt_utc.replace(tzinfo=tz.utc)
-                            login_dt_local = login_dt_utc + timedelta(hours=local_offset_hours)
-                            login_formatted = login_dt_local.strftime('%Y-%m-%d %H:%M:%S')
-                        else:
-                            login_formatted = login_time[:19] if len(login_time) >= 19 else login_time
-                    else:
-                        login_formatted = "N/A"
-                except Exception as e:
-                    logger.warning(f"Failed to format login time: {e}")
-                    login_formatted = login_time if login_time else "N/A"
-                
-                try:
-                    if logout_time != "В процессе...":
-                        if 'T' in logout_time:
-                            logout_dt_utc = datetime.fromisoformat(logout_time.replace('Z', '+00:00'))
-                            if logout_dt_utc.tzinfo is None:
-                                logout_dt_utc = logout_dt_utc.replace(tzinfo=tz.utc)
-                            logout_dt_local = logout_dt_utc + timedelta(hours=local_offset_hours)
-                            logout_formatted = logout_dt_local.strftime('%Y-%m-%d %H:%M:%S')
-                        else:
-                            logout_formatted = logout_time[:19] if len(logout_time) >= 19 else logout_time
-                    else:
-                        logout_formatted = logout_time
-                except Exception as e:
-                    logger.warning(f"Failed to format logout time: {e}")
-                    logout_formatted = logout_time if logout_time != "В процессе..." else "В процессе..."
+                # Форматируем время в московское (UTC+3)
+                login_formatted = format_datetime_moscow(login_time) if login_time else "N/A"
+                logout_formatted = format_datetime_moscow(logout_time) if logout_time != "В процессе..." else "В процессе..."
                 
                 # Вычисляем длительность сессии
                 if logout_time != "В процессе..." and login_time:
@@ -1717,15 +1692,8 @@ class ReportsTab(QWidget):
                 details = entry.get('details', '')
                 session_id = entry.get('session_id', '')
                 
-                # Форматируем время
-                try:
-                    if 'T' in timestamp_str:
-                        dt = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-                        time_formatted = dt.strftime('%Y-%m-%d %H:%M:%S')
-                    else:
-                        time_formatted = timestamp_str[:19] if len(timestamp_str) >= 19 else timestamp_str
-                except:
-                    time_formatted = timestamp_str
+                # Форматируем время в московское (UTC+3)
+                time_formatted = format_datetime_moscow(timestamp_str) if timestamp_str else ""
                 
                 # Получаем имя и группу сотрудника
                 user = users_dict.get(email, {})
@@ -1753,15 +1721,265 @@ class ReportsTab(QWidget):
             filename, _ = QFileDialog.getSaveFileName(
                 self,
                 f"Экспорт отчета '{tab_name}'",
-                f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                f"report_{format_datetime_moscow(datetime.now(), '%Y%m%d_%H%M%S')}.xlsx",
                 "Excel Files (*.xlsx)"
             )
             
-            if filename:
-                QMessageBox.information(self, "Экспорт", f"Экспорт в Excel будет реализован в следующей версии.\nФайл: {filename}")
+            if not filename:
+                return
+            
+            if not EXCEL_AVAILABLE:
+                QMessageBox.warning(
+                    self, "Ошибка", 
+                    "Модуль openpyxl не установлен.\n"
+                    "Установите: pip install openpyxl --break-system-packages"
+                )
+                return
+            
+            try:
+                from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+            except ImportError:
+                QMessageBox.warning(
+                    self, "Ошибка", 
+                    "Модуль openpyxl не установлен.\n"
+                    "Установите: pip install openpyxl --break-system-packages"
+                )
+                return
+            
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = tab_name[:31]  # Excel ограничение длины имени листа
+            
+            # Экспортируем данные в зависимости от текущей вкладки
+            if current_tab == 0:  # По сотрудникам
+                self._export_employees_to_excel(ws)
+            elif current_tab == 1:  # По группам
+                self._export_groups_to_excel(ws)
+            elif current_tab == 2:  # По статусам
+                self._export_statuses_to_excel(ws)
+            elif current_tab == 3:  # Продуктивность
+                self._export_productivity_to_excel(ws)
+            elif current_tab == 4:  # Нарушения
+                self._export_violations_to_excel(ws)
+            elif current_tab == 5:  # Перерывы
+                self._export_breaks_to_excel(ws)
+            elif current_tab == 6:  # Логины/Логауты
+                self._export_login_logout_to_excel(ws)
+            elif current_tab == 7:  # Все статусы
+                self._export_all_statuses_to_excel(ws)
+            else:
+                QMessageBox.warning(self, "Ошибка", "Неизвестный тип отчета")
+                return
+            
+            # Сохраняем файл
+            wb.save(filename)
+            QMessageBox.information(
+                self, "Успех", 
+                f"Отчет успешно экспортирован:\n{filename}"
+            )
+            
         except Exception as e:
-            logger.error(f"Failed to export to Excel: {e}")
+            logger.error(f"Failed to export to Excel: {e}", exc_info=True)
             QMessageBox.warning(self, "Ошибка", f"Не удалось экспортировать: {e}")
+    
+    def _export_employees_to_excel(self, ws):
+        """Экспортирует отчет по сотрудникам"""
+        headers = ["Сотрудник", "Группа", "Общее время", "Продуктивное время", 
+                  "Продуктивность", "Сессий", "Нарушений"]
+        
+        # Заголовки
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=12)
+        
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+        # Данные
+        for row in range(self.employees_table.rowCount()):
+            for col in range(self.employees_table.columnCount() - 1):  # -1 чтобы исключить кнопку "Детали"
+                item = self.employees_table.item(row, col)
+                if item:
+                    ws.cell(row=row + 2, column=col + 1, value=item.text())
+        
+        # Автоширина колонок
+        for col in range(1, len(headers) + 1):
+            ws.column_dimensions[get_column_letter(col)].width = 20
+    
+    def _export_groups_to_excel(self, ws):
+        """Экспортирует отчет по группам"""
+        headers = ["Группа", "Сотрудников", "Общее время", "Среднее время", 
+                  "Продуктивность", "Нарушений"]
+        
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=12)
+        
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+        for row in range(self.groups_table.rowCount()):
+            for col in range(self.groups_table.columnCount() - 1):
+                item = self.groups_table.item(row, col)
+                if item:
+                    ws.cell(row=row + 2, column=col + 1, value=item.text())
+        
+        for col in range(1, len(headers) + 1):
+            ws.column_dimensions[get_column_letter(col)].width = 20
+    
+    def _export_statuses_to_excel(self, ws):
+        """Экспортирует отчет по статусам"""
+        headers = ["Статус", "Время", "Процент", "Переходов", "Средняя длительность", "Сотрудников"]
+        
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=12)
+        
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+        for row in range(self.statuses_table.rowCount()):
+            for col in range(self.statuses_table.columnCount()):
+                item = self.statuses_table.item(row, col)
+                if item:
+                    ws.cell(row=row + 2, column=col + 1, value=item.text())
+        
+        for col in range(1, len(headers) + 1):
+            ws.column_dimensions[get_column_letter(col)].width = 20
+    
+    def _export_productivity_to_excel(self, ws):
+        """Экспортирует отчет по продуктивности"""
+        headers = ["Сотрудник", "Группа", "Продуктивное время", "Процент", "Сессий"]
+        
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=12)
+        
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+        for row in range(self.productivity_table.rowCount()):
+            for col in range(self.productivity_table.columnCount()):
+                item = self.productivity_table.item(row, col)
+                if item:
+                    ws.cell(row=row + 2, column=col + 1, value=item.text())
+        
+        for col in range(1, len(headers) + 1):
+            ws.column_dimensions[get_column_letter(col)].width = 20
+    
+    def _export_violations_to_excel(self, ws):
+        """Экспортирует отчет по нарушениям"""
+        # Используем данные из break_manager
+        date_from = self.date_from.date().toPyDate().isoformat()
+        date_to = self.date_to.date().toPyDate().isoformat()
+        
+        violations = self.break_mgr.get_violations_report(
+            date_from=date_from,
+            date_to=date_to
+        )
+        
+        headers = ["Дата/Время", "Сотрудник", "Тип нарушения", "Детали", "Статус"]
+        
+        header_fill = PatternFill(start_color="E74C3C", end_color="E74C3C", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=12)
+        
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+        for idx, violation in enumerate(violations, 2):
+            timestamp = format_datetime_moscow(violation.get("Timestamp", ""))
+            ws.cell(row=idx, column=1, value=timestamp)
+            ws.cell(row=idx, column=2, value=violation.get("Email", ""))
+            
+            vtype = violation.get("ViolationType", "")
+            vtype_text = {
+                "OUT_OF_WINDOW": "Вне окна",
+                "OVER_LIMIT": "Превышен лимит",
+                "QUOTA_EXCEEDED": "Превышено количество"
+            }.get(vtype, vtype)
+            ws.cell(row=idx, column=3, value=vtype_text)
+            ws.cell(row=idx, column=4, value=violation.get("Details", ""))
+            ws.cell(row=idx, column=5, value=violation.get("Status", ""))
+        
+        for col in range(1, len(headers) + 1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = 25
+    
+    def _export_breaks_to_excel(self, ws):
+        """Экспортирует отчет по перерывам"""
+        headers = ["Сотрудник", "Группа", "Перерывов", "Время", "В рамках графика"]
+        
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=12)
+        
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+        for row in range(self.breaks_table.rowCount()):
+            for col in range(self.breaks_table.columnCount() - 1):  # -1 для кнопки "Детали"
+                item = self.breaks_table.item(row, col)
+                if item:
+                    ws.cell(row=row + 2, column=col + 1, value=item.text())
+        
+        for col in range(1, len(headers) + 1):
+            ws.column_dimensions[get_column_letter(col)].width = 20
+    
+    def _export_login_logout_to_excel(self, ws):
+        """Экспортирует отчет по логинам/логаутам"""
+        headers = ["Время логина", "Время логаута", "Длительность сессии", "Статус"]
+        
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=12)
+        
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+        for row in range(self.login_logout_table.rowCount()):
+            for col in range(self.login_logout_table.columnCount()):
+                item = self.login_logout_table.item(row, col)
+                if item:
+                    ws.cell(row=row + 2, column=col + 1, value=item.text())
+        
+        for col in range(1, len(headers) + 1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = 25
+    
+    def _export_all_statuses_to_excel(self, ws):
+        """Экспортирует отчет по всем статусам"""
+        headers = ["Время", "Сотрудник", "Группа", "Статус", "Детали", "Сессия"]
+        
+        header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+        header_font = Font(bold=True, color="FFFFFF", size=12)
+        
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        
+        for row in range(self.all_statuses_table.rowCount()):
+            for col in range(self.all_statuses_table.columnCount()):
+                item = self.all_statuses_table.item(row, col)
+                if item:
+                    ws.cell(row=row + 2, column=col + 1, value=item.text())
+        
+        for col in range(1, len(headers) + 1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = 25
     
     def _export_to_pdf(self):
         """Экспортирует текущий отчет в PDF"""

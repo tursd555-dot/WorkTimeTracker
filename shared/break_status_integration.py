@@ -46,7 +46,25 @@ class BreakStatusIntegration:
             
             # Переход С перерыва
             elif self.is_break_status(old_status) and not self.is_break_status(new_status):
-                return self._end_break(email, old_status)
+                result = self._end_break(email, old_status)
+                # Сбрасываем дебаунсинг при переходе на продуктивный статус
+                if result:
+                    try:
+                        from shared.break_notifications_v2 import reset_user_notifications
+                        reset_user_notifications(email, old_status)
+                    except Exception:
+                        pass
+                return result
+            
+            # Переход на продуктивный статус (сброс дебаунсинга для всех перерывов)
+            productive_statuses = {'В работе', 'На задаче', 'Чат', 'Запись', 'Анкеты', 
+                                  'Стоматология', 'Входящие', 'Почта', 'Аудио'}
+            if new_status in productive_statuses and self.is_break_status(old_status):
+                try:
+                    from shared.break_notifications_v2 import reset_user_notifications
+                    reset_user_notifications(email, old_status)
+                except Exception:
+                    pass
             
             return True
             
@@ -98,6 +116,13 @@ class BreakStatusIntegration:
         # Удаляем из активных
         self.active_breaks.pop(email, None)
         
+        # Сбрасываем дебаунсинг уведомлений при завершении перерыва
+        try:
+            from shared.break_notifications_v2 import reset_user_notifications
+            reset_user_notifications(email, break_type)
+        except Exception as e:
+            logger.debug(f"Failed to reset notifications: {e}")
+        
         logger.info(f"Break ended successfully for {email}: {duration} minutes")
         return True
     
@@ -116,6 +141,13 @@ class BreakStatusIntegration:
         - Закрытии приложения
         """
         try:
+            # Сбрасываем дебаунсинг уведомлений при logout
+            try:
+                from shared.break_notifications_v2 import reset_user_notifications
+                reset_user_notifications(email)  # Сбрасываем все уведомления для пользователя
+            except Exception as e:
+                logger.debug(f"Failed to reset notifications on logout: {e}")
+            
             # Проверяем есть ли активный перерыв в памяти
             break_type_from_memory = None
             if email in self.active_breaks:
