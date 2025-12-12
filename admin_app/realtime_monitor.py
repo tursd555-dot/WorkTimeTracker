@@ -127,7 +127,12 @@ class RealtimeMonitorWindow(QMainWindow):
         self.users_data: Dict[str, Dict] = {}
         self.active_breaks: Dict[str, Dict] = {}
         self.last_update_time: Optional[datetime] = None
-        
+
+        # Кэш графиков пользователей (чтобы не запрашивать каждый раз)
+        self.schedules_cache: Dict[str, any] = {}
+        self.schedules_cache_time = 0.0
+        self.schedules_cache_ttl = 60.0  # Обновляем кэш каждые 60 секунд
+
         # Таймер обновления
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self._refresh_data)
@@ -425,17 +430,14 @@ class RealtimeMonitorWindow(QMainWindow):
                 
                 # Лимиты: обед 60 мин, перерыв 15 мин
                 break_limit = 60 if break_type == 'Обед' else 15 if break_type == 'Перерыв' else 0
-                
-                # Пытаемся получить лимит из графика пользователя
-                try:
-                    schedule = self.break_mgr.get_user_schedule(email)
-                    if schedule and schedule.limits:
-                        for limit in schedule.limits:
-                            if limit.break_type == break_type:
-                                break_limit = limit.time_minutes
-                                break
-                except Exception as e:
-                    logger.debug(f"Failed to get schedule limit for {email}: {e}")
+
+                # Пытаемся получить лимит из графика пользователя (с кэшированием)
+                schedule = self._get_user_schedule_cached(email)
+                if schedule and schedule.limits:
+                    for limit in schedule.limits:
+                        if limit.break_type == break_type:
+                            break_limit = limit.time_minutes
+                            break
                 
                 # Проверяем превышение лимита
                 is_over_limit = break_duration > break_limit if break_limit > 0 else False
@@ -470,6 +472,31 @@ class RealtimeMonitorWindow(QMainWindow):
             self.status_label.setText("🔴 Ошибка")
             self.status_label.setStyleSheet("color: #e74c3c; font-weight: bold; font-size: 12px;")
     
+    def _get_user_schedule_cached(self, email: str):
+        """
+        Получает график пользователя с кэшированием.
+        Кэш обновляется раз в 60 секунд для всех пользователей сразу.
+        """
+        import time
+        current_time = time.time()
+
+        # Проверяем, нужно ли обновить кэш
+        if current_time - self.schedules_cache_time > self.schedules_cache_ttl:
+            logger.debug("Updating schedules cache...")
+            self.schedules_cache = {}
+            self.schedules_cache_time = current_time
+
+        # Если графика нет в кэше, запрашиваем его
+        if email not in self.schedules_cache:
+            try:
+                schedule = self.break_mgr.get_user_schedule(email)
+                self.schedules_cache[email] = schedule
+            except Exception as e:
+                logger.debug(f"Failed to get schedule for {email}: {e}")
+                self.schedules_cache[email] = None
+
+        return self.schedules_cache.get(email)
+
     def _get_current_user_statuses(self) -> Dict[str, Dict]:
         """
         Получает текущие рабочие статусы всех пользователей из work_log.
