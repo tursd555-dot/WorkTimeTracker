@@ -27,7 +27,7 @@ except ImportError:
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QPushButton, QVBoxLayout,
     QHBoxLayout, QMessageBox, QTextEdit,
-    QSizePolicy, QApplication, QSystemTrayIcon, QStyle
+    QSizePolicy, QApplication, QSystemTrayIcon, QStyle, QGroupBox
 )
 from PyQt5.QtCore import QTimer, Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QPixmap, QIcon
@@ -339,26 +339,36 @@ class EmployeeApp(QWidget):
         header_layout.addWidget(title_label, alignment=Qt.AlignCenter)
         main_layout.addLayout(header_layout)
 
+        # ========== МОНИТОР ТЕКУЩЕГО СТАТУСА ==========
+        monitor_group = QGroupBox("📊 Монитор текущего статуса")
+        monitor_group.setStyleSheet("QGroupBox { font-weight: bold; border: 2px solid #2196F3; border-radius: 5px; margin-top: 10px; padding-top: 10px; }")
+        monitor_layout = QVBoxLayout()
+        monitor_layout.setSpacing(8)
+        
         self.info_label = QLabel()
         self.info_label.setStyleSheet("QLabel { background-color: #f5f5f5; border-radius: 5px; padding: 10px; }")
         self._update_info_text()
-        main_layout.addWidget(self.info_label)
+        monitor_layout.addWidget(self.info_label)
+
+        self.time_label = QLabel("⏱ Время в статусе: 00:00:00")
+        self.time_label.setAlignment(Qt.AlignCenter)
+        self.time_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #1976D2;")
+        monitor_layout.addWidget(self.time_label)
+
+        self.shift_timer_label = QLabel("⏰ Время с момента входа в систему: 00:00:00")
+        self.shift_timer_label.setAlignment(Qt.AlignCenter)
+        self.shift_timer_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #0069c0;")
+        monitor_layout.addWidget(self.shift_timer_label)
+        
+        monitor_group.setLayout(monitor_layout)
+        main_layout.addWidget(monitor_group)
+        # ================================================
 
         self.comment_input = QTextEdit()
         self.comment_input.setPlaceholderText("Введите комментарий...")
         self.comment_input.setMaximumHeight(80)
         self.comment_input.setStyleSheet("QTextEdit { border: 1px solid #ddd; border-radius: 5px; padding: 5px; }")
         main_layout.addWidget(self.comment_input)
-
-        self.time_label = QLabel("⏱ Время в статусе: 00:00:00")
-        self.time_label.setAlignment(Qt.AlignCenter)
-        self.time_label.setStyleSheet("font-size: 14px;")
-        main_layout.addWidget(self.time_label)
-
-        self.shift_timer_label = QLabel("⏰ Время с момента входа в систему: 00:00:00")
-        self.shift_timer_label.setAlignment(Qt.AlignCenter)
-        self.shift_timer_label.setStyleSheet("font-size: 14px; color: #0069c0;")
-        main_layout.addWidget(self.shift_timer_label)
 
         for group in STATUS_GROUPS:
             btn_layout = QHBoxLayout()
