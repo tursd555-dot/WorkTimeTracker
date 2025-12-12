@@ -190,11 +190,13 @@ class EmployeeApp(QWidget):
                 self.break_mgr = None
             
             if self.login_was_performed:
-                now = datetime.now().isoformat()
+                # ИСПРАВЛЕНО: используем UTC вместо локального времени
+                from datetime import timezone
+                now = datetime.now(timezone.utc).isoformat()
                 has_session = bool(self._continue_existing_session)
                 action_type = "STATUS_CHANGE" if has_session else "LOGIN"
                 comment = "Начало смены" if action_type == "LOGIN" else "Смена статуса"
-                
+
                 # Записываем в ActiveSessions только при LOGIN
                 if action_type == "LOGIN":
                     api = get_sheets_api()
