@@ -783,17 +783,17 @@ class BreakManager:
                     details=f"Превышен дневной лимит {break_type}: {today_count+1}/{limit.daily_count}"
                 )
                 
-                # Отправить уведомление
+                # Отправить уведомление в группу (одно за нарушение)
                 try:
-                    from shared.break_notifications import send_quota_exceeded_notification
+                    from shared.break_notifications_v2 import send_quota_exceeded_notification
                     send_quota_exceeded_notification(
                         email=email,
                         break_type=break_type,
                         used_count=today_count + 1,
                         limit_count=limit.daily_count
                     )
-                except:
-                    pass
+                except Exception as e:
+                    logger.error(f"Failed to send quota notification: {e}")
                 
                 # НЕ блокируем - продолжаем начинать перерыв
                 logger.warning(f"Quota exceeded for {email}, but allowing break (violation logged)")
@@ -823,7 +823,7 @@ class BreakManager:
                 in_window=in_window
             )
             
-            # 6. Если вне окна - фиксируем нарушение (WARNING уровень, т.к. это более серьезно)
+            # 6. Если вне окна - фиксируем нарушение и отправляем уведомление в группу
             if not in_window:
                 self._log_violation(
                     email=email,
@@ -898,7 +898,8 @@ class BreakManager:
             
             # 4. Проверить превышение
             overtime = duration - limit
-            if overtime > self.OVERTIME_THRESHOLD:
+            # Уведомление при превышении на 1+ минуту (изменено с OVERTIME_THRESHOLD)
+            if overtime >= 1:
                 # Критическое нарушение
                 self._log_violation(
                     email=email,
@@ -908,9 +909,9 @@ class BreakManager:
                     details=f"Превышен лимит на {overtime} мин ({duration}/{limit})"
                 )
                 
-                # Отправить уведомления
+                # Отправить уведомления (новая система с дебаунсингом)
                 try:
-                    from shared.break_notifications import send_overtime_notification
+                    from shared.break_notifications_v2 import send_overtime_notification
                     send_overtime_notification(
                         email=email,
                         break_type=break_type,

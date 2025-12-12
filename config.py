@@ -484,7 +484,7 @@ BREAK_VIOLATIONS_SHEET = "Violations"        # v20.3: renamed
 
 # Порог превышения для уведомления (в минутах)
 # Если перерыв превышен на эту величину - отправляется уведомление
-BREAK_OVERTIME_THRESHOLD = 2
+BREAK_OVERTIME_THRESHOLD = 1  # Уведомление при превышении на 1 минуту
 
 # Включить/выключить уведомления
 BREAK_NOTIFY_USER_ON_VIOLATION = True      # Уведомлять пользователя

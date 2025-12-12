@@ -391,7 +391,17 @@ class RealtimeMonitorWindow(QMainWindow):
                 if not email:
                     continue
                 
+                # Пропускаем тестовых пользователей
+                if 'test' in email or 'example.com' in email:
+                    logger.debug(f"Пропущен тестовый пользователь: {email}")
+                    continue
+                
+                # Пропускаем пользователей, которых нет в списке Users
                 user = users_dict.get(email, {})
+                if not user:
+                    logger.debug(f"Пропущен пользователь без записи в Users: {email}")
+                    continue
+                
                 status = session.get('Status', 'Неизвестно')
                 login_time_str = session.get('LoginTime', '')
                 

@@ -143,6 +143,16 @@ class AdminWindow(QMainWindow):
 
         # Менеджер перерывов
         self.break_mgr = BreakManager(self.repo.sheets)
+        
+        # Сервис мониторинга перерывов для уведомлений
+        try:
+            from admin_app.break_monitor_service import BreakMonitorService
+            self.break_monitor = BreakMonitorService(self.break_mgr)
+            self.break_monitor.start()
+            logger.info("Break monitor service started")
+        except Exception as e:
+            logger.warning(f"Failed to start break monitor service: {e}")
+            self.break_monitor = None
 
         # Кэш пользователей и активных e-mail
         self.users: List[Dict[str, str]] = []
