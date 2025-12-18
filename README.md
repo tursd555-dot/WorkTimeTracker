@@ -37,11 +37,13 @@
 - ✅ Audit logging
 - ✅ Improved sync (conflict resolution, exponential backoff)
 - ✅ Database migrations
+- ✅ Automatic data archiving (Supabase → Google Sheets)
 
 ## Documentation
 
 - `INTEGRATION_GUIDE.md` - How improvements are integrated
 - `CHANGES_MAP.md` - What was changed in code
+- `ARCHIVE_GUIDE.md` - Automatic data archiving guide (Supabase → Google Sheets)
 - `docs/` - Additional documentation
 
 ## Need Help?

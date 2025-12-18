@@ -100,9 +100,14 @@ class SheetsAPI:
                         logger.error("Running in frozen mode but credentials not found!")
                     raise FileNotFoundError(f"Credentials file missing at: {self.credentials_path}")
                 # Обязателен ID книги из .env
-                self._sheet_id = (os.getenv("GOOGLE_SHEET_ID") or "").strip()
+                # Проверяем GOOGLE_SHEET_ID или SPREADSHEET_ID
+                self._sheet_id = (
+                    os.getenv("GOOGLE_SHEET_ID") or 
+                    os.getenv("SPREADSHEET_ID") or 
+                    ""
+                ).strip()
                 if not self._sheet_id:
-                    raise RuntimeError("GOOGLE_SHEET_ID не задан в .env")
+                    raise RuntimeError("GOOGLE_SHEET_ID или SPREADSHEET_ID не задан в .env")
                 self._init_client()
         except Exception as e:
             logger.critical("Initialization failed", exc_info=True)
