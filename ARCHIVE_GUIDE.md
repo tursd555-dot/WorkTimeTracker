@@ -41,6 +41,16 @@ GOOGLE_ARCHIVE_SHEET_ID=your_archive_sheet_id_here
 
 ### Ручной запуск
 
+**Windows:**
+```cmd
+python run_archive.py
+```
+или просто:
+```cmd
+run_archive.bat
+```
+
+**Linux/Mac:**
 ```bash
 python3 run_archive.py
 ```
@@ -60,12 +70,15 @@ crontab -e
 
 ### Автоматический запуск (Windows)
 
-Создайте scheduled task через Task Scheduler:
-1. Откройте Task Scheduler
+**Вариант 1: Через Task Scheduler (рекомендуется)**
+1. Откройте Task Scheduler (Планировщик задач)
 2. Создайте новую задачу
 3. Установите триггер: ежедневно в 2:00
-4. Действие: запустить программу `python.exe`
-5. Аргументы: `C:\path\to\project\run_archive.py`
+4. Действие: запустить программу `C:\path\to\project\run_archive.bat`
+5. Или запустить `python.exe` с аргументом `C:\path\to\project\run_archive.py`
+
+**Вариант 2: Через bat-файл в планировщике**
+Просто укажите полный путь к `run_archive.bat` в планировщике задач
 
 ## Структура архивных листов
 
