@@ -1,5 +1,27 @@
 # Безопасное хранение Credentials
 
+## ✅ Рекомендуется: Supabase (без ZIP архива)
+
+**Преимущества:**
+- Не нужно хранить файлы локально
+- Доступен с любого компьютера
+- Централизованное управление
+- Безопасное хранение в базе данных
+
+**Быстрая настройка:**
+
+1. Создайте таблицу в Supabase (выполните миграцию):
+   ```sql
+   -- migrations/006_credentials_table.sql
+   ```
+
+2. Загрузите credentials:
+   ```bash
+   python tools/upload_credentials_to_supabase.py service_account.json
+   ```
+
+3. Готово! Приложение автоматически загрузит credentials из Supabase
+
 ## Варианты хранения
 
 ### 1. ✅ Рекомендуется: Windows Credential Manager (keyring)
