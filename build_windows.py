@@ -144,6 +144,9 @@ def build_user_app():
     main_script = "user_app/main.py"
     icon_file = "user_app/sberhealf.ico"
     
+    # Очищаем папку перед сборкой
+    cleanup_app_folder(app_name)
+    
     options = get_base_options(main_script, app_name, windowed=True)
     
     # Иконка
@@ -214,6 +217,23 @@ def build_user_app():
         logger.error(f"❌ Ошибка сборки пользовательской части: {e}", exc_info=True)
         return False
 
+def cleanup_app_folder(app_name: str):
+    """Очищает папку приложения перед сборкой"""
+    dist_app_path = Path('dist') / app_name
+    if dist_app_path.exists():
+        try:
+            shutil.rmtree(dist_app_path, onerror=handle_remove_readonly)
+            logger.debug(f"  Удалена папка: {app_name}")
+        except (PermissionError, OSError) as e:
+            # Если заблокировано, переименовываем
+            try:
+                new_name = f"{app_name}_old_{int(time.time())}"
+                dist_app_path.rename(Path('dist') / new_name)
+                logger.info(f"  ⚠ Переименована заблокированная папка: {app_name} → {new_name}")
+            except Exception as rename_err:
+                logger.warning(f"  ⚠ Не удалось переименовать {app_name}: {rename_err}")
+                logger.warning(f"  PyInstaller попробует очистить сам, но может быть ошибка")
+
 def build_admin_app():
     """Собирает админку"""
     logger.info("=" * 80)
@@ -223,6 +243,9 @@ def build_admin_app():
     app_name = "WorkTimeTracker_Admin"
     main_script = "admin_app/main_admin.py"
     icon_file = "user_app/sberhealf.ico"
+    
+    # Очищаем папку перед сборкой
+    cleanup_app_folder(app_name)
     
     options = get_base_options(main_script, app_name, windowed=True)
     
@@ -292,6 +315,9 @@ def build_monitor_app():
     main_script = "admin_app/realtime_monitor.py"
     icon_file = "user_app/sberhealf.ico"
     
+    # Очищаем папку перед сборкой
+    cleanup_app_folder(app_name)
+    
     options = get_base_options(main_script, app_name, windowed=True)
     
     # Иконка
@@ -351,7 +377,10 @@ def build_bot_app():
     main_script = "telegram_bot/main.py"
     icon_file = "user_app/sberhealf.ico"
     
-    options = get_base_options(main_script, app_name, windowed=False)  # Бот должен показывать консоль
+    # Очищаем папку перед сборкой
+    cleanup_app_folder(app_name)
+    
+    options = get_base_options(main_script, app_name, windowed=False)
     
     # Иконка
     if Path(icon_file).exists():
