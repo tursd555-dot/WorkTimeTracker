@@ -1,12 +1,12 @@
 name: Supabase Keep-Alive
 
-# Запускать каждые 3 дня в 00:00 UTC
+# Запускать каждые 2 дня в 00:00 UTC
 # Supabase приостанавливает проекты через 7 дней неактивности,
-# поэтому запуск каждые 3 дня обеспечивает достаточный запас
+# поэтому запуск каждые 2 дня обеспечивает достаточный запас (5 запусков за 7 дней)
 on:
   schedule:
-    # Запуск в 00:00 UTC каждые 3 дня (в полночь 1-го, 4-го, 7-го и т.д.)
-    - cron: '0 0 */3 * *'
+    # Запуск в 00:00 UTC каждые 2 дня (в полночь 1-го, 3-го, 5-го, 7-го и т.д.)
+    - cron: '0 0 */2 * *'
 
   # Также разрешить ручной запуск из GitHub UI
   workflow_dispatch:
@@ -14,6 +14,7 @@ on:
 jobs:
   keepalive:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
       - name: Checkout repository
@@ -23,21 +24,50 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install supabase
+          pip install supabase python-dotenv
+
+      - name: Verify secrets are set
+        run: |
+          if [ -z "${{ secrets.SUPABASE_URL }}" ] || [ -z "${{ secrets.SUPABASE_KEY }}" ]; then
+            echo "❌ Ошибка: SUPABASE_URL или SUPABASE_KEY не установлены в Secrets!"
+            echo "Перейдите в Settings → Secrets and variables → Actions и добавьте их"
+            exit 1
+          else
+            echo "✅ Secrets проверены"
+          fi
 
       - name: Run keep-alive script
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
+          echo "🚀 Запуск keep-alive скрипта..."
           python supabase_keepalive.py
+          if [ $? -eq 0 ]; then
+            echo "✅ Keep-alive выполнен успешно!"
+          else
+            echo "❌ Keep-alive завершился с ошибкой"
+            exit 1
+          fi
 
-      - name: Notify on failure
+      - name: Success notification
+        if: success()
+        run: |
+          echo "✅ ========================================"
+          echo "✅ Supabase Keep-Alive выполнен успешно!"
+          echo "✅ Следующий запуск: через 2 дня"
+          echo "✅ ========================================"
+
+      - name: Failure notification
         if: failure()
         run: |
-          echo "⚠️ Keep-alive script failed! Check logs."
-          echo "Проверьте что SUPABASE_URL и SUPABASE_KEY установлены в Secrets"
+          echo "❌ ========================================"
+          echo "❌ Keep-alive script failed!"
+          echo "❌ Проверьте логи выше для деталей"
+          echo "❌ Убедитесь что SUPABASE_URL и SUPABASE_KEY установлены в Secrets"
+          echo "❌ ========================================"
