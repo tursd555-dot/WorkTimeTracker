@@ -160,7 +160,7 @@ class ApplicationManager(QObject):
             logger.info("=== СИСТЕМЫ ОТКАЗОУСТОЙЧИВОСТИ ГОТОВЫ ===")
         
         except Exception as e:
-            logger.error(f"Ошибка инициализации систем отказоустойчивости: {e}")
+            logging.getLogger(__name__).error(f"Ошибка инициализации систем отказоустойчивости: {e}")
             # Не критично - продолжаем работу без мониторинга
             self.health_checker = None
             self.degradation_manager = None
@@ -189,7 +189,7 @@ class ApplicationManager(QObject):
             
             logger.info("Sync service started")
         except Exception as e:
-            logger.error(f"Failed to start sync service: {e}")
+            logging.getLogger(__name__).error(f"Failed to start sync service: {e}")
 
     # --- UI потоки ---
     def show_login_window(self):
