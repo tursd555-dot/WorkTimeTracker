@@ -149,13 +149,20 @@ def _get_credentials_password():
 CREDENTIALS_ZIP_PASSWORD = _get_credentials_password()
 
 # Детектируем режимы (приоритет: Supabase > локальный JSON > ZIP)
+# Проверяем Supabase credentials только если Supabase используется
 USE_SUPABASE_CREDENTIALS = False
-try:
-    from shared.credentials_storage import get_credentials_json_from_supabase
-    supabase_creds = get_credentials_json_from_supabase()
-    USE_SUPABASE_CREDENTIALS = bool(supabase_creds)
-except Exception:
-    pass
+if USE_SUPABASE:  # USE_SUPABASE определен выше в файле
+    try:
+        from shared.credentials_storage import get_credentials_json_from_supabase
+        supabase_creds = get_credentials_json_from_supabase()
+        USE_SUPABASE_CREDENTIALS = bool(supabase_creds)
+        if USE_SUPABASE_CREDENTIALS:
+            import logging
+            logging.getLogger(__name__).info("✓ Credentials будут загружены из Supabase")
+    except Exception as e:
+        # Если произошла ошибка при загрузке из Supabase, просто не используем этот режим
+        # Это нормально, если credentials еще не загружены в Supabase
+        USE_SUPABASE_CREDENTIALS = False
 
 USE_ZIP = bool(CREDENTIALS_ZIP.exists() and CREDENTIALS_ZIP_PASSWORD) and not USE_SUPABASE_CREDENTIALS
 USE_JSON_DIRECT = bool(GOOGLE_CREDENTIALS_FILE_ENV and not USE_ZIP and not USE_SUPABASE_CREDENTIALS)
