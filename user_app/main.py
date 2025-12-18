@@ -95,6 +95,8 @@ class ApplicationManager(QObject):
 
     # --- Инициализация ресурсов ---
     def _initialize_resources(self):
+        logger = logging.getLogger(__name__)
+        
         # Проверяем наличие учетных данных
         from config import USE_ZIP, USE_SUPABASE_CREDENTIALS, CREDENTIALS_ZIP
         
@@ -138,7 +140,6 @@ class ApplicationManager(QObject):
         
         # Инициализация систем отказоустойчивости
         try:
-            logger = logging.getLogger(__name__)
             logger.info("=== ИНИЦИАЛИЗАЦИЯ СИСТЕМ ОТКАЗОУСТОЙЧИВОСТИ ===")
             
             # 1. Health Checker
@@ -166,8 +167,8 @@ class ApplicationManager(QObject):
 
     # --- Фоновая синхронизация ---
     def _start_sync_service(self):
+        logger = logging.getLogger(__name__)
         try:
-            logger = logging.getLogger(__name__)
             logger.info("=== ЗАПУСК СЕРВИСА СИНХРОНИЗАЦИИ ===")
             
             # Запускаем сервис синхронизации в фоне
