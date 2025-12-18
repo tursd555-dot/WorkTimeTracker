@@ -122,6 +122,39 @@ class SupabaseAPI:
             logger.error(f"Failed to get users: {e}")
             return []
     
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, str]]:
+        """Быстрый поиск пользователя по email (совместимо с sheets_api)"""
+        try:
+            em = (email or "").strip().lower()
+            if not em:
+                return None
+            
+            response = self.client.table('users')\
+                .select('*')\
+                .eq('email', em)\
+                .eq('is_active', True)\
+                .limit(1)\
+                .execute()
+            
+            if not response.data:
+                return None
+            
+            row = response.data[0]
+            
+            # Возвращаем в формате, совместимом с sheets_api
+            return {
+                "email": row.get('email', ''),
+                "name": row.get('name', ''),
+                "role": row.get('role', 'специалист'),
+                "shift_hours": row.get('shift_hours', '8 часов'),
+                "telegram_login": row.get('telegram_id', ''),
+                "group": row.get('group_name', ''),
+            }
+            
+        except Exception as e:
+            logger.error(f"User lookup failed for '{email}': {e}")
+            return None
+    
     def upsert_user(self, user: Dict[str, str]) -> None:
         """Добавить или обновить пользователя"""
         email = user.get('Email')
@@ -189,9 +222,249 @@ class SupabaseAPI:
         """Получить активные сессии"""
         try:
             response = self.client.table('active_sessions').select('*').execute()
-            return response.data
-        except:
+            # Преобразуем в формат, совместимый с sheets_api
+            sessions = []
+            for row in response.data:
+                sessions.append({
+                    'Email': row.get('email', ''),
+                    'Name': row.get('name', ''),
+                    'SessionID': row.get('session_id', ''),
+                    'LoginTime': row.get('login_time', ''),
+                    'Status': row.get('status', 'active'),
+                    'Comment': row.get('comment', '')
+                })
+            return sessions
+        except Exception as e:
+            logger.error(f"Failed to get active sessions: {e}")
             return []
+    
+    def get_active_session(self, email: str) -> Optional[Dict[str, str]]:
+        """Получить активную сессию пользователя по email (совместимо с sheets_api)"""
+        try:
+            email_lower = (email or "").strip().lower()
+            if not email_lower:
+                return None
+            
+            response = self.client.table('active_sessions')\
+                .select('*')\
+                .eq('email', email_lower)\
+                .eq('status', 'active')\
+                .limit(1)\
+                .execute()
+            
+            if not response.data:
+                return None
+            
+            row = response.data[0]
+            # Возвращаем в формате, совместимом с sheets_api
+            return {
+                'Email': row.get('email', ''),
+                'Name': row.get('name', ''),
+                'SessionID': row.get('session_id', ''),
+                'LoginTime': row.get('login_time', ''),
+                'Status': row.get('status', 'active'),
+                'Comment': row.get('comment', '')
+            }
+        except Exception as e:
+            logger.error(f"Failed to get active session for {email}: {e}")
+            return None
+    
+    def set_active_session(self, email: str, name: str, session_id: str, login_time: Optional[str] = None) -> bool:
+        """Установить активную сессию (совместимо с sheets_api)"""
+        try:
+            from datetime import datetime, timezone
+            
+            data = {
+                'email': email.lower().strip(),
+                'name': name,
+                'session_id': session_id,
+                'login_time': login_time or datetime.now(timezone.utc).isoformat(),
+                'status': 'active',
+                'comment': ''
+            }
+            
+            # Проверяем, есть ли уже активная сессия
+            existing = self.get_active_session(email)
+            if existing:
+                # Обновляем существующую
+                self.client.table('active_sessions')\
+                    .update(data)\
+                    .eq('email', email.lower().strip())\
+                    .eq('status', 'active')\
+                    .execute()
+            else:
+                # Создаем новую
+                self.client.table('active_sessions').insert(data).execute()
+            
+            return True
+        except Exception as e:
+            logger.error(f"Failed to set active session: {e}")
+            return False
+    
+    def kick_active_session(self, email: str, logout_time: Optional[str] = None) -> bool:
+        """Завершить активную сессию пользователя (совместимо с sheets_api)"""
+        try:
+            from datetime import datetime, timezone
+            
+            email_lower = (email or "").strip().lower()
+            if not email_lower:
+                return False
+            
+            logout_timestamp = logout_time or datetime.now(timezone.utc).isoformat()
+            
+            # Обновляем статус сессии
+            self.client.table('active_sessions')\
+                .update({
+                    'status': 'kicked',
+                    'logout_time': logout_timestamp
+                })\
+                .eq('email', email_lower)\
+                .eq('status', 'active')\
+                .execute()
+            
+            return True
+        except Exception as e:
+            logger.error(f"Failed to kick active session for {email}: {e}")
+            return False
+    
+    def finish_active_session(
+        self,
+        email: str,
+        session_id: str,
+        logout_time: Optional[str] = None,
+        reason: str = "user_exit"
+    ) -> bool:
+        """Завершить активную сессию (Status=finished) (совместимо с sheets_api)"""
+        try:
+            from datetime import datetime, timezone
+            
+            email_lower = (email or "").strip().lower()
+            sid = str(session_id).strip()
+            
+            if not email_lower or not sid:
+                return False
+            
+            logout_timestamp = logout_time or datetime.now(timezone.utc).isoformat()
+            
+            # Обновляем статус сессии
+            self.client.table('active_sessions')\
+                .update({
+                    'status': 'finished',
+                    'logout_time': logout_timestamp,
+                    'logout_reason': reason
+                })\
+                .eq('email', email_lower)\
+                .eq('session_id', sid)\
+                .eq('status', 'active')\
+                .execute()
+            
+            return True
+        except Exception as e:
+            logger.error(f"Failed to finish active session: {e}")
+            return False
+    
+    def check_user_session_status(self, email: str, session_id: str) -> str:
+        """Проверить статус сессии пользователя (совместимо с sheets_api)"""
+        try:
+            email_lower = (email or "").strip().lower()
+            sid = str(session_id).strip()
+            
+            if not email_lower or not sid:
+                return "unknown"
+            
+            # Сначала ищем точное совпадение email + session_id
+            try:
+                response = self.client.table('active_sessions')\
+                    .select('status')\
+                    .eq('email', email_lower)\
+                    .eq('session_id', sid)\
+                    .order('login_time', desc=True)\
+                    .limit(1)\
+                    .execute()
+                
+                if response.data:
+                    status = (response.data[0].get('status') or '').strip().lower()
+                    return status or "unknown"
+            except:
+                pass
+            
+            # Если не найдено, ищем по email (последняя сессия)
+            try:
+                response = self.client.table('active_sessions')\
+                    .select('status')\
+                    .eq('email', email_lower)\
+                    .order('login_time', desc=True)\
+                    .limit(1)\
+                    .execute()
+                
+                if response.data:
+                    status = (response.data[0].get('status') or '').strip().lower()
+                    return status or "unknown"
+            except:
+                pass
+            
+            if response.data:
+                status = (response.data[0].get('status') or '').strip().lower()
+                return status or "unknown"
+            
+            return "unknown"
+            
+        except Exception as e:
+            logger.error(f"Failed to check session status: {e}")
+            return "unknown"
+    
+    def log_user_actions(self, actions: List[Dict[str, Any]], email: str, user_group: Optional[str] = None) -> bool:
+        """Логировать действия пользователя (совместимо с sheets_api)"""
+        try:
+            email_lower = (email or "").strip().lower()
+            if not email_lower:
+                return False
+            
+            # Определяем группу пользователя
+            if not user_group:
+                user = self.get_user_by_email(email_lower)
+                user_group = user.get('group', 'Входящие') if user else 'Входящие'
+            
+            # Логируем каждое действие
+            for action in actions:
+                # Используем timestamp из действия, если есть
+                action_timestamp = action.get('timestamp')
+                if action_timestamp:
+                    # Если есть timestamp, создаем запись напрямую
+                    user = self.client.table('users').select('id').eq('email', email_lower).execute()
+                    user_id = user.data[0]['id'] if user.data else None
+                    
+                    data = {
+                        'user_id': user_id,
+                        'email': email_lower,
+                        'name': action.get('name', ''),
+                        'timestamp': action_timestamp,
+                        'action_type': action.get('action_type', ''),
+                        'status': action.get('status', ''),
+                        'details': action.get('comment', ''),
+                        'session_id': action.get('session_id', '')
+                    }
+                    
+                    try:
+                        self.client.table('work_log').insert(data).execute()
+                    except Exception as e:
+                        logger.error(f"Failed to log action: {e}")
+                else:
+                    # Используем стандартный метод log_action
+                    self.log_action(
+                        email=email_lower,
+                        name=action.get('name', ''),
+                        action_type=action.get('action_type', ''),
+                        status=action.get('status', ''),
+                        details=action.get('comment', ''),
+                        session_id=action.get('session_id', '')
+                    )
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to log user actions for {email}: {e}")
+            return False
     
     # ========================================================================
     # WORK LOG

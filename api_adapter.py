@@ -22,6 +22,14 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")  # Будет взят из пер�
 # ADAPTER
 # ============================================================================
 
+# Совместимый класс ошибки для обоих бэкендов
+class SheetsAPIError(Exception):
+    """Базовый класс ошибки API (совместимый с sheets_api.SheetsAPIError)"""
+    def __init__(self, message: str, is_retryable: bool = False, details: str = ""):
+        super().__init__(message)
+        self.is_retryable = is_retryable
+        self.details = details
+
 if USE_BACKEND == "supabase":
     logger.info("🚀 Using Supabase backend")
     
@@ -56,6 +64,8 @@ if USE_BACKEND == "sheets":
     logger.info("📊 Using Google Sheets backend")
     
     from sheets_api import SheetsAPI, get_sheets_api
+    # Импортируем SheetsAPIError из sheets_api (переопределяем наш базовый класс)
+    from sheets_api import SheetsAPIError
     
     logger.info("✅ Google Sheets API loaded")
 
@@ -63,7 +73,7 @@ if USE_BACKEND == "sheets":
 # EXPORT
 # ============================================================================
 
-__all__ = ["get_sheets_api", "SheetsAPI", "USE_BACKEND"]
+__all__ = ["get_sheets_api", "SheetsAPI", "SheetsAPIError", "USE_BACKEND"]
 
 
 if __name__ == "__main__":
