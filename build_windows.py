@@ -44,10 +44,6 @@ COMMON_HIDDEN_IMPORTS = [
     'gspread',
     'google.auth',
     'google.oauth2',
-    'googleapiclient',
-    'googleapiclient.discovery',
-    'httplib2',
-    'OpenSSL',
     'requests',
     'sqlite3',
     'cryptography',
@@ -58,9 +54,6 @@ COMMON_HIDDEN_IMPORTS = [
     'supabase._sync',
     'postgrest',
     'realtime',
-    'storage',
-    'gotrue',
-    'functions',
     'api_adapter',
     'supabase_api',
     'sheets_api',
@@ -70,6 +63,16 @@ COMMON_HIDDEN_IMPORTS = [
     'httpx._config',
     'certifi',
     'ssl',
+]
+
+# Опциональные импорты (только если используются Google Sheets)
+OPTIONAL_HIDDEN_IMPORTS = [
+    'googleapiclient',
+    'googleapiclient.discovery',
+    'httplib2',
+    'storage',  # Может быть частью supabase
+    'gotrue',   # Может быть частью supabase
+    'functions',  # Может быть частью supabase
 ]
 
 # Общие данные для включения
@@ -122,8 +125,7 @@ def get_base_options(main_script: str, app_name: str, windowed: bool = True):
         f'--name={app_name}',
         '--onedir',
         '--windowed' if windowed else '--console',
-        '--clean',
-        '--noconfirm',
+        '--noconfirm',  # Убрали --clean, чтобы избежать проблем с заблокированными файлами
         '--log-level=WARN',
         '--paths=.',
         '--collect-all', 'certifi',  # Собираем SSL сертификаты
@@ -161,7 +163,7 @@ def build_user_app():
         if Path(src).exists():
             options.extend(['--add-data', f'{src};{dst}'])
     
-    # Скрытые импорты
+    # Скрытые импорты (только используемые)
     user_imports = COMMON_HIDDEN_IMPORTS + [
         'user_app',
         'user_app.gui',
@@ -473,7 +475,7 @@ def main():
             except PermissionError as e:
                 if attempt < max_retries - 1:
                     logger.debug(f"  Попытка {attempt + 1}/{max_retries} удаления {path}...")
-                    time.sleep(1)  # Ждем секунду перед повторной попыткой
+                    time.sleep(2)  # Увеличили задержку до 2 секунд
                 else:
                     logger.warning(f"  ⚠ Не удалось удалить {path} после {max_retries} попыток: {e}")
                     logger.warning(f"  Возможно, файлы используются другим процессом или заблокированы антивирусом")
@@ -492,14 +494,34 @@ def main():
                 return False
         return False
     
-    for dir_name in ['dist', 'build']:
+    # Очищаем только build, dist оставляем для PyInstaller (он сам будет очищать при необходимости)
+    for dir_name in ['build']:
         dir_path = Path(dir_name)
         if dir_path.exists():
             if safe_remove_tree(dir_path):
                 logger.info(f"  ✓ Очищена директория: {dir_name}")
             else:
                 logger.warning(f"  ⚠ Директория {dir_name} не удалена, но сборка продолжится")
-                logger.warning(f"  Рекомендуется удалить папку {dir_name} вручную перед следующей сборкой")
+    
+    # Для dist используем более мягкий подход - переименовываем если заблокирован
+    dist_path = Path('dist')
+    if dist_path.exists():
+        # Пытаемся переименовать старые папки внутри dist
+        try:
+            for item in dist_path.iterdir():
+                if item.is_dir() and item.name.startswith('WorkTimeTracker_'):
+                    try:
+                        # Пытаемся удалить старую папку
+                        shutil.rmtree(item, onerror=handle_remove_readonly)
+                    except PermissionError:
+                        # Если не удалось, переименовываем
+                        old_name = item.name
+                        new_name = f"{old_name}_old_{int(time.time())}"
+                        item.rename(dist_path / new_name)
+                        logger.info(f"  Переименована папка {old_name} → {new_name}")
+        except Exception as e:
+            logger.warning(f"  ⚠ Не удалось очистить dist: {e}")
+            logger.warning(f"  PyInstaller попытается очистить сам")
     
     # Сборка всех компонентов
     results = {}
