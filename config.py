@@ -148,18 +148,27 @@ def _get_credentials_password():
 
 CREDENTIALS_ZIP_PASSWORD = _get_credentials_password()
 
-# Детектируем режимы
-USE_ZIP = bool(CREDENTIALS_ZIP.exists() and CREDENTIALS_ZIP_PASSWORD)
-USE_JSON_DIRECT = bool(GOOGLE_CREDENTIALS_FILE_ENV and not USE_ZIP)
+# Детектируем режимы (приоритет: Supabase > локальный JSON > ZIP)
+USE_SUPABASE_CREDENTIALS = False
+try:
+    from shared.credentials_storage import get_credentials_json_from_supabase
+    supabase_creds = get_credentials_json_from_supabase()
+    USE_SUPABASE_CREDENTIALS = bool(supabase_creds)
+except Exception:
+    pass
+
+USE_ZIP = bool(CREDENTIALS_ZIP.exists() and CREDENTIALS_ZIP_PASSWORD) and not USE_SUPABASE_CREDENTIALS
+USE_JSON_DIRECT = bool(GOOGLE_CREDENTIALS_FILE_ENV and not USE_ZIP and not USE_SUPABASE_CREDENTIALS)
 
 if USE_ZIP:
     CREDENTIALS_ZIP_PASSWORD = CREDENTIALS_ZIP_PASSWORD.encode("utf-8")
-elif not USE_JSON_DIRECT:
-    # Ни ZIP+пароля, ни JSON-пути
+elif not USE_JSON_DIRECT and not USE_SUPABASE_CREDENTIALS:
+    # Ни Supabase, ни ZIP+пароля, ни JSON-пути
     raise RuntimeError(
-        "Учетные данные не найдены. Положи зашифрованный архив рядом с EXE "
-        f"({CREDENTIALS_ZIP_NAME}) и укажи CREDENTIALS_ZIP_PASSWORD в .env, "
-        "или укажи GOOGLE_CREDENTIALS_FILE."
+        "Учетные данные не найдены. Варианты:\n"
+        "1. Сохраните credentials в Supabase (таблица или Storage)\n"
+        "2. Положите JSON файл рядом с EXE и укажите GOOGLE_CREDENTIALS_FILE в .env\n"
+        f"3. Положите зашифрованный архив ({CREDENTIALS_ZIP_NAME}) и укажите CREDENTIALS_ZIP_PASSWORD"
     )
 
 # --- Ленивая загрузка credentials ---
@@ -184,11 +193,32 @@ def credentials_path() -> Generator[Path, None, None]:
     """
     Возвращает путь к service_account.json.
     Приоритет:
-      1) ZIP рядом с EXE + CREDENTIALS_ZIP_PASSWORD
-      2) GOOGLE_CREDENTIALS_FILE из .env (может быть относительным путём)
+      1) Supabase (таблица или Storage)
+      2) ZIP рядом с EXE + CREDENTIALS_ZIP_PASSWORD
+      3) GOOGLE_CREDENTIALS_FILE из .env (может быть относительным путём)
     Используйте: with credentials_path() as p: ...
     """
     global _CRED_MEMORY
+    
+    # Приоритет 1: Supabase
+    if USE_SUPABASE_CREDENTIALS:
+        try:
+            from shared.credentials_storage import get_credentials_json_from_supabase
+            creds_json = get_credentials_json_from_supabase()
+            if creds_json:
+                # Создаем временный файл
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as tmp:
+                    tmp.write(creds_json)
+                    tmp_name = Path(tmp.name)
+                try:
+                    yield tmp_name
+                finally:
+                    tmp_name.unlink(missing_ok=True)
+                return
+        except Exception as e:
+            logger.warning(f"Не удалось загрузить credentials из Supabase: {e}")
+            # Fallback на другие методы
+    
     if USE_ZIP:
         zip_path = CREDENTIALS_ZIP
         if not zip_path.exists():
@@ -255,9 +285,16 @@ def get_credentials_file() -> Path:
     """
     Обратная совместимость: получить путь к JSON.
     
-    В режиме ZIP возвращает путь к архиву (реальный файл создается через credentials_path()).
-    В режиме JSON возвращает путь к файлу (ищет в папке проекта если не найден по указанному пути).
+    Приоритет:
+      1) Supabase - возвращает временный файл (создается через credentials_path())
+      2) ZIP - возвращает путь к архиву (реальный файл создается через credentials_path())
+      3) JSON - возвращает путь к файлу (ищет в папке проекта если не найден по указанному пути)
     """
+    if USE_SUPABASE_CREDENTIALS:
+        # Для Supabase режима нужно использовать credentials_path() для получения файла
+        # Здесь возвращаем заглушку, реальный файл будет создан при использовании
+        return Path(tempfile.gettempdir()) / "wtt_credentials_supabase.json"
+    
     if USE_JSON_DIRECT:
         # Для прямого JSON файла ищем в папке проекта
         direct = Path(GOOGLE_CREDENTIALS_FILE_ENV)

@@ -73,9 +73,60 @@ def delete_password_from_keyring() -> bool:
         return False
 
 
+def get_credentials_json_from_supabase() -> Optional[str]:
+    """
+    Получить credentials JSON из Supabase (таблица или Storage)
+    
+    Приоритет:
+    1. Таблица credentials (если есть)
+    2. Supabase Storage (если настроено)
+    
+    Returns:
+        JSON строка с credentials или None
+    """
+    try:
+        from supabase_api import get_supabase_api
+        
+        api = get_supabase_api()
+        if not hasattr(api, 'client'):
+            return None
+        
+        # Пробуем получить из таблицы credentials
+        try:
+            result = api.client.table('credentials').select('credentials_json').limit(1).execute()
+            if result.data and len(result.data) > 0:
+                creds_json = result.data[0].get('credentials_json')
+                if creds_json:
+                    logger.info("✓ Credentials загружены из таблицы Supabase")
+                    return creds_json
+        except Exception as e:
+            logger.debug(f"Таблица credentials не найдена или недоступна: {e}")
+        
+        # Пробуем получить из Storage как JSON файл
+        try:
+            bucket_name = os.getenv("SUPABASE_STORAGE_BUCKET", "credentials")
+            file_name = os.getenv("SUPABASE_STORAGE_FILE", "service_account.json")
+            
+            response = api.client.storage.from_(bucket_name).download(file_name)
+            if response:
+                if isinstance(response, bytes):
+                    creds_json = response.decode('utf-8')
+                else:
+                    creds_json = response
+                logger.info(f"✓ Credentials загружены из Supabase Storage: {bucket_name}/{file_name}")
+                return creds_json
+        except Exception as e:
+            logger.debug(f"Не удалось загрузить из Supabase Storage: {e}")
+        
+        return None
+    except Exception as e:
+        logger.debug(f"Не удалось загрузить credentials из Supabase: {e}")
+        return None
+
+
 def get_credentials_from_supabase_storage() -> Optional[bytes]:
     """
-    Получить зашифрованный архив credentials из Supabase Storage
+    Получить зашифрованный архив credentials из Supabase Storage (legacy, для совместимости)
     
     Требует настройки:
     - SUPABASE_STORAGE_BUCKET в переменных окружения
@@ -96,7 +147,9 @@ def get_credentials_from_supabase_storage() -> Optional[bytes]:
         
         if response:
             logger.info(f"✓ Credentials загружены из Supabase Storage: {bucket_name}/{file_name}")
-            return response
+            if isinstance(response, bytes):
+                return response
+            return response.encode('utf-8') if isinstance(response, str) else None
         
         return None
     except Exception as e:
@@ -104,9 +157,70 @@ def get_credentials_from_supabase_storage() -> Optional[bytes]:
         return None
 
 
+def save_credentials_json_to_supabase(credentials_json: str) -> bool:
+    """
+    Сохранить credentials JSON в Supabase (таблица или Storage)
+    
+    Args:
+        credentials_json: JSON строка с credentials
+    
+    Returns:
+        True если успешно сохранено
+    """
+    try:
+        from supabase_api import get_supabase_api
+        
+        api = get_supabase_api()
+        if not hasattr(api, 'client'):
+            return False
+        
+        # Пробуем сохранить в таблицу credentials
+        try:
+            # Проверяем существование записи
+            existing = api.client.table('credentials').select('id').limit(1).execute()
+            
+            if existing.data and len(existing.data) > 0:
+                # Обновляем существующую запись
+                api.client.table('credentials').update({
+                    'credentials_json': credentials_json,
+                    'updated_at': 'now()'
+                }).eq('id', existing.data[0]['id']).execute()
+            else:
+                # Создаем новую запись
+                api.client.table('credentials').insert({
+                    'credentials_json': credentials_json
+                }).execute()
+            
+            logger.info("✓ Credentials сохранены в таблицу Supabase")
+            return True
+        except Exception as e:
+            logger.debug(f"Не удалось сохранить в таблицу, пробуем Storage: {e}")
+        
+        # Fallback: сохраняем в Storage
+        try:
+            bucket_name = os.getenv("SUPABASE_STORAGE_BUCKET", "credentials")
+            file_name = os.getenv("SUPABASE_STORAGE_FILE", "service_account.json")
+            
+            api.client.storage.from_(bucket_name).upload(
+                file_name,
+                credentials_json.encode('utf-8'),
+                file_options={"content-type": "application/json", "upsert": "true"}
+            )
+            
+            logger.info(f"✓ Credentials сохранены в Supabase Storage: {bucket_name}/{file_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Не удалось сохранить в Storage: {e}")
+            return False
+        
+    except Exception as e:
+        logger.error(f"Не удалось сохранить credentials в Supabase: {e}")
+        return False
+
+
 def save_credentials_to_supabase_storage(zip_data: bytes) -> bool:
     """
-    Сохранить зашифрованный архив credentials в Supabase Storage
+    Сохранить зашифрованный архив credentials в Supabase Storage (legacy, для совместимости)
     
     Требует настройки:
     - SUPABASE_STORAGE_BUCKET в переменных окружения
