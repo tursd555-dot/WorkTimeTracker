@@ -205,21 +205,27 @@ def save_credentials_json_to_supabase(credentials_json: str) -> bool:
             if existing.data and len(existing.data) > 0:
                 # Обновляем существующую запись
                 api.client.table('credentials').update({
-                    'credentials_json': credentials_json,
-                    'updated_at': 'now()'
+                    'credentials_json': credentials_json
                 }).eq('id', existing.data[0]['id']).execute()
+                logger.info("✓ Credentials обновлены в таблице Supabase")
             else:
                 # Создаем новую запись
                 api.client.table('credentials').insert({
                     'credentials_json': credentials_json
                 }).execute()
+                logger.info("✓ Credentials сохранены в таблицу Supabase")
             
-            logger.info("✓ Credentials сохранены в таблицу Supabase")
             return True
         except Exception as e:
-            logger.debug(f"Не удалось сохранить в таблицу, пробуем Storage: {e}")
+            error_msg = str(e)
+            # Если таблица не существует, пробуем Storage
+            if 'does not exist' in error_msg or 'relation' in error_msg.lower() or 'not found' in error_msg.lower():
+                logger.debug(f"Таблица credentials не найдена, пробуем Storage: {e}")
+            else:
+                # Другая ошибка - логируем и пробуем Storage
+                logger.warning(f"Ошибка при сохранении в таблицу: {e}")
         
-        # Fallback: сохраняем в Storage
+        # Fallback: сохраняем в Storage (только если таблица не работает)
         try:
             bucket_name = os.getenv("SUPABASE_STORAGE_BUCKET", "credentials")
             file_name = os.getenv("SUPABASE_STORAGE_FILE", "service_account.json")
@@ -233,11 +239,20 @@ def save_credentials_json_to_supabase(credentials_json: str) -> bool:
             logger.info(f"✓ Credentials сохранены в Supabase Storage: {bucket_name}/{file_name}")
             return True
         except Exception as e:
-            logger.error(f"Не удалось сохранить в Storage: {e}")
+            error_msg = str(e)
+            if 'Bucket not found' in error_msg or '404' in error_msg:
+                logger.error(f"Bucket '{bucket_name}' не найден в Supabase Storage")
+                logger.error("Создайте bucket через Supabase Dashboard или используйте таблицу credentials")
+            else:
+                logger.error(f"Не удалось сохранить в Storage: {e}")
             return False
         
     except Exception as e:
         logger.error(f"Не удалось сохранить credentials в Supabase: {e}")
+        logger.error("\nПроверьте:")
+        logger.error("1. Таблица credentials создана? Выполните миграцию 006_credentials_table.sql")
+        logger.error("2. RLS политики настроены правильно?")
+        logger.error("3. SUPABASE_URL и SUPABASE_KEY правильные?")
         return False
 
 
