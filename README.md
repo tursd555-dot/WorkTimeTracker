@@ -38,8 +38,40 @@
 - ✅ Improved sync (conflict resolution, exponential backoff)
 - ✅ Database migrations
 
+## Сборка приложений для Windows
+
+Для создания исполняемых файлов (.exe) для распространения среди администраторов и пользователей:
+
+### Быстрая сборка всех приложений
+
+```bash
+# Используя Python скрипт
+python build_all_windows.py
+
+# Или используя батник (Windows)
+build_windows.bat
+```
+
+### Сборка отдельных приложений
+
+```bash
+# Только админка
+python build_all_windows.py --admin
+
+# Только пользовательское приложение
+python build_all_windows.py --user
+
+# Только Telegram бот
+python build_all_windows.py --bot
+```
+
+После сборки готовые приложения будут в папке `dist/`, а пакет для распространения - в папке `release/`.
+
+**Подробная инструкция:** см. `BUILD_WINDOWS.md`
+
 ## Documentation
 
+- `BUILD_WINDOWS.md` - Инструкция по сборке приложений для Windows
 - `INTEGRATION_GUIDE.md` - How improvements are integrated
 - `CHANGES_MAP.md` - What was changed in code
 - `docs/` - Additional documentation

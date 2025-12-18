@@ -21,35 +21,84 @@ def main():
     try:
         logger.info("🚀 Сборка админки...")
         app_name = "WorkTimeTracker_Admin"
-        main_script = "admin_app/main_admin.py" # Путь от корня
-        icon_file = "user_app/sberhealf.ico" # Используем ту же иконку
-
+        
+        # Определяем корень проекта (на 2 уровня выше от dev-tools/build)
+        project_root = Path(__file__).parent.parent.parent.resolve()
+        main_script = project_root / "admin_app" / "main_admin.py"
+        icon_file = project_root / "user_app" / "sberhealf.ico"
+        
+        # Переходим в корень проекта
+        os.chdir(str(project_root))
+        
+        # Очистка
         for dir_name in ['dist', 'build']:
             if Path(dir_name).exists():
                 shutil.rmtree(dir_name)
                 logger.info(f"🧹 Очищена директория: {dir_name}")
 
+        # Проверка существования файлов
+        if not main_script.exists():
+            logger.critical(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {main_script} не найден!")
+            sys.exit(1)
+
         options = [
-            main_script,
+            str(main_script),
             f'--name={app_name}',
             '--onedir',
             '--windowed',
             '--clean',
             '--noconfirm',
             '--log-level=WARN',
-            f'--icon={icon_file}' if Path(icon_file).exists() else None,
-            '--paths=.', # Ключевая строка
-            '--add-data=secret_creds.zip;.',
-            '--add-data=config.py;.',
-            '--add-data=user_app/sberhealf.png;user_app',
-            '--hidden-import=auto_sync',
-            '--hidden-import=sheets_api',
-            '--hidden-import=user_app.db_local',
+            '--paths=.',
         ]
+        
+        # Добавляем иконку, если существует
+        if icon_file.exists():
+            options.append(f'--icon={icon_file}')
+        else:
+            logger.warning(f"⚠ Иконка не найдена: {icon_file}")
+        
+        # Добавляем данные
+        data_files = [
+            ('secret_creds.zip', '.'),
+            ('config.py', '.'),
+        ]
+        
+        for src, dst in data_files:
+            src_path = project_root / src
+            if src_path.exists():
+                options.extend(['--add-data', f'{src_path};{dst}'])
+            else:
+                logger.warning(f"⚠ Файл не найден: {src_path}")
+        
+        # Добавляем PNG иконку, если существует
+        png_icon = project_root / "user_app" / "sberhealf.png"
+        if png_icon.exists():
+            options.extend(['--add-data', f'{png_icon};user_app'])
+        
+        # Скрытые импорты
+        hidden_imports = [
+            'auto_sync',
+            'sheets_api',
+            'supabase_api',
+            'user_app.db_local',
+            'admin_app',
+            'admin_app.repo',
+            'admin_app.break_manager',
+            'admin_app.reports_tab',
+            'shared',
+            'sync',
+            'PyQt5',
+            'PyQt5.QtCore',
+            'PyQt5.QtWidgets',
+            'PyQt5.QtGui',
+        ]
+        
+        for imp in hidden_imports:
+            options.extend(['--hidden-import', imp])
 
-        options = [opt for opt in options if opt is not None]
-
-        logger.info(f"⚙️  Запуск: {' '.join(options)}")
+        logger.info(f"⚙️ Запуск PyInstaller...")
+        logger.debug(f"Опции: {' '.join(options)}")
         run(options)
 
         exe_path = Path('dist') / app_name / f"{app_name}.exe"
