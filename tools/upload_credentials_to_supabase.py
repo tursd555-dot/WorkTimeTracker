@@ -41,34 +41,14 @@ try:
     # Импортируем config - он установит переменные через os.environ.setdefault
     import config
     
-    # Проверяем что переменные установлены
-    supabase_url = os.getenv("SUPABASE_URL")
-    supabase_key = os.getenv("SUPABASE_KEY")
-    
-    if not supabase_url:
-        # Используем значение по умолчанию из config.py
+    # Убеждаемся что переменные установлены
+    if not os.getenv("SUPABASE_URL"):
         os.environ["SUPABASE_URL"] = "https://jtgaobxbwibjcvasefzi.supabase.co"
-        supabase_url = os.getenv("SUPABASE_URL")
     
-    if not supabase_key:
-        # Значение из config.py должно быть установлено, но проверим
-        # В config.py строка 30 устанавливает значение по умолчанию
-        print("⚠️  SUPABASE_KEY не найден!")
-        print("   Проверьте:")
-        print("   1. Файл .env содержит SUPABASE_KEY=...")
-        print("   2. Или значение установлено в config.py (строка 30)")
-        print("   3. Или укажите через переменную окружения:")
-        print("      $env:SUPABASE_KEY='ваш_ключ'  # PowerShell")
-        print("      export SUPABASE_KEY='ваш_ключ'  # Bash")
-        return 1
-    
-    print(f"✓ SUPABASE_URL: {supabase_url[:30]}...")
-    print(f"✓ SUPABASE_KEY: {'*' * 20}...{supabase_key[-10:] if len(supabase_key) > 10 else '*' * len(supabase_key)}")
+    # SUPABASE_KEY должен быть установлен в config.py или .env
+    # Если нет - будет проверка в main()
 except Exception as e:
-    print(f"❌ Ошибка при загрузке config: {e}")
-    import traceback
-    traceback.print_exc()
-    return 1
+    print(f"⚠️  Предупреждение при загрузке config: {e}")
 
 from shared.credentials_storage import save_credentials_json_to_supabase
 
@@ -111,16 +91,22 @@ def main():
     supabase_url = os.getenv("SUPABASE_URL")
     supabase_key = os.getenv("SUPABASE_KEY")
     
-    if not supabase_url or not supabase_key:
-        print("\n❌ Переменные Supabase не настроены!")
-        print("\nВарианты решения:")
-        print("1. Создайте файл .env в корне проекта со строками:")
-        print("   SUPABASE_URL=https://jtgaobxbwibjcvasefzi.supabase.co")
-        print("   SUPABASE_KEY=ваш_ключ_из_supabase")
-        print("\n2. Или установите через PowerShell:")
+    if not supabase_url:
+        print("\n❌ SUPABASE_URL не настроен!")
+        print("   Установите через PowerShell:")
         print("   $env:SUPABASE_URL='https://jtgaobxbwibjcvasefzi.supabase.co'")
+        print("   Или добавьте в .env: SUPABASE_URL=https://jtgaobxbwibjcvasefzi.supabase.co")
+        return 1
+    
+    if not supabase_key:
+        print("\n❌ SUPABASE_KEY не настроен!")
+        print("\nВарианты решения:")
+        print("1. Создайте файл .env в корне проекта со строкой:")
+        print("   SUPABASE_KEY=ваш_ключ_из_supabase_dashboard")
+        print("\n2. Или установите через PowerShell:")
         print("   $env:SUPABASE_KEY='ваш_ключ'")
-        print("\n3. Или проверьте config.py - там должны быть значения по умолчанию")
+        print("\n3. Где взять ключ:")
+        print("   Supabase Dashboard → Project Settings → API → anon public key")
         return 1
     
     print(f"\n✓ SUPABASE_URL: {supabase_url}")
