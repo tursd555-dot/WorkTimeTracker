@@ -134,12 +134,19 @@ CREDENTIALS_ZIP = BASE_DIR / CREDENTIALS_ZIP_NAME
 GOOGLE_CREDENTIALS_FILE_ENV = (os.getenv("GOOGLE_CREDENTIALS_FILE") or "").strip()
 
 # Получаем пароль: сначала из keyring, потом из env
-try:
-    from shared.credentials_storage import get_credentials_password
-    CREDENTIALS_ZIP_PASSWORD = get_credentials_password() or os.getenv("CREDENTIALS_ZIP_PASSWORD", "")
-except ImportError:
-    # Fallback если модуль не доступен
-    CREDENTIALS_ZIP_PASSWORD = os.getenv("CREDENTIALS_ZIP_PASSWORD", "")
+def _get_credentials_password():
+    """Получить пароль от credentials (keyring > env)"""
+    try:
+        from shared.credentials_storage import get_credentials_password
+        password = get_credentials_password()
+        if password:
+            return password
+    except ImportError:
+        pass
+    # Fallback на переменную окружения
+    return os.getenv("CREDENTIALS_ZIP_PASSWORD", "")
+
+CREDENTIALS_ZIP_PASSWORD = _get_credentials_password()
 
 # Детектируем режимы
 USE_ZIP = bool(CREDENTIALS_ZIP.exists() and CREDENTIALS_ZIP_PASSWORD)
