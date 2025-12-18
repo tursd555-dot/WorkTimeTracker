@@ -522,45 +522,6 @@ def main():
     # Очистка старых сборок
     logger.info("🧹 Очистка старых сборок...")
     
-    def handle_remove_readonly(func, path, exc):
-        """Обработчик для удаления файлов с атрибутом readonly"""
-        try:
-            os.chmod(path, stat.S_IWRITE)
-            func(path)
-        except Exception:
-            # Если не удалось изменить права, просто пропускаем
-            pass
-    
-    def safe_remove_tree(path: Path, max_retries: int = 3):
-        """Безопасное удаление дерева с повторными попытками"""
-        for attempt in range(max_retries):
-            try:
-                if path.exists():
-                    shutil.rmtree(path, onerror=handle_remove_readonly)
-                    return True
-                return True
-            except PermissionError as e:
-                if attempt < max_retries - 1:
-                    logger.debug(f"  Попытка {attempt + 1}/{max_retries} удаления {path}...")
-                    time.sleep(2)  # Увеличили задержку до 2 секунд
-                else:
-                    logger.warning(f"  ⚠ Не удалось удалить {path} после {max_retries} попыток: {e}")
-                    logger.warning(f"  Возможно, файлы используются другим процессом или заблокированы антивирусом")
-                    # Пытаемся переименовать папку вместо удаления
-                    try:
-                        old_name = path.name
-                        new_name = f"{old_name}_old_{int(time.time())}"
-                        path.rename(path.parent / new_name)
-                        logger.info(f"  Переименована папка {old_name} → {new_name}")
-                        return True
-                    except Exception as e2:
-                        logger.error(f"  ❌ Не удалось переименовать {path}: {e2}")
-                        return False
-            except Exception as e:
-                logger.warning(f"  ⚠ Ошибка при удалении {path}: {e}")
-                return False
-        return False
-    
     # Очищаем только build, dist оставляем для PyInstaller (он сам будет очищать при необходимости)
     for dir_name in ['build']:
         dir_path = Path(dir_name)
@@ -580,12 +541,16 @@ def main():
                     try:
                         # Пытаемся удалить старую папку
                         shutil.rmtree(item, onerror=handle_remove_readonly)
-                    except PermissionError:
-                        # Если не удалось, переименовываем
-                        old_name = item.name
-                        new_name = f"{old_name}_old_{int(time.time())}"
-                        item.rename(dist_path / new_name)
-                        logger.info(f"  Переименована папка {old_name} → {new_name}")
+                    except (PermissionError, OSError) as e:
+                        # Если не удалось удалить (заблокировано), переименовываем
+                        try:
+                            old_name = item.name
+                            new_name = f"{old_name}_old_{int(time.time())}"
+                            item.rename(dist_path / new_name)
+                            logger.info(f"  ⚠ Переименована заблокированная папка: {old_name} → {new_name}")
+                        except Exception as rename_err:
+                            logger.warning(f"  ⚠ Не удалось переименовать {item.name}: {rename_err}")
+                            logger.warning(f"  PyInstaller попытается очистить сам, но может быть ошибка")
         except Exception as e:
             logger.warning(f"  ⚠ Не удалось очистить dist: {e}")
             logger.warning(f"  PyInstaller попытается очистить сам")
