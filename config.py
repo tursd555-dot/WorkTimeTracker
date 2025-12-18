@@ -200,10 +200,38 @@ def credentials_path() -> Generator[Path, None, None]:
             tmp_name.unlink(missing_ok=True)
     elif USE_JSON_DIRECT:
         direct = Path(GOOGLE_CREDENTIALS_FILE_ENV)
+        
+        # Игнорируем temp_credentials.json - это временный файл для ZIP режима
+        if 'temp_credentials' in str(direct):
+            raise RuntimeError("temp_credentials.json не должен использоваться напрямую. Используйте ZIP режим или укажите правильный путь к credentials.")
+        
         if not direct.is_absolute():
+            # Относительный путь - ищем относительно BASE_DIR
             direct = (BASE_DIR / direct).resolve()
+        
         if not direct.exists():
-            raise FileNotFoundError(f"GOOGLE_CREDENTIALS_FILE не найден: {direct}")
+            # Если файл не найден по указанному пути, пробуем найти в папке проекта
+            filename = direct.name
+            search_paths = [
+                BASE_DIR / filename,
+                BASE_DIR.parent / filename,
+                Path.cwd() / filename,
+            ]
+            
+            found_path = None
+            for search_path in search_paths:
+                if search_path.exists():
+                    found_path = search_path
+                    break
+            
+            if found_path:
+                direct = found_path
+            else:
+                raise FileNotFoundError(
+                    f"GOOGLE_CREDENTIALS_FILE не найден: {GOOGLE_CREDENTIALS_FILE_ENV}\n"
+                    f"Искали в: {BASE_DIR}, {BASE_DIR.parent}, {Path.cwd()}"
+                )
+        
         yield direct
     else:
         raise RuntimeError("Не удалось определить путь к credentials (ни ZIP, ни JSON).")
@@ -213,13 +241,33 @@ def get_credentials_file() -> Path:
     Обратная совместимость: получить путь к JSON.
     
     В режиме ZIP возвращает путь к архиву (реальный файл создается через credentials_path()).
-    В режиме JSON возвращает путь к файлу.
+    В режиме JSON возвращает путь к файлу (ищет в папке проекта если не найден по указанному пути).
     """
     if USE_JSON_DIRECT:
-        # Для прямого JSON файла просто возвращаем путь
+        # Для прямого JSON файла ищем в папке проекта
         direct = Path(GOOGLE_CREDENTIALS_FILE_ENV)
+        
+        # Игнорируем temp_credentials.json
+        if 'temp_credentials' in str(direct):
+            # Возвращаем путь к архиву как fallback
+            return CREDENTIALS_ZIP
+        
         if not direct.is_absolute():
             direct = (BASE_DIR / direct).resolve()
+        
+        # Если файл не найден, ищем в папке проекта
+        if not direct.exists():
+            filename = direct.name
+            search_paths = [
+                BASE_DIR / filename,
+                BASE_DIR.parent / filename,
+                Path.cwd() / filename,
+            ]
+            
+            for search_path in search_paths:
+                if search_path.exists():
+                    return search_path
+        
         return direct
     else:
         # Для ZIP режима возвращаем путь к архиву
@@ -413,15 +461,40 @@ def validate_config() -> None:
         # Для прямого JSON файла проверяем его существование
         try:
             direct = Path(GOOGLE_CREDENTIALS_FILE_ENV)
-            if not direct.is_absolute():
-                direct = (BASE_DIR / direct).resolve()
-            if not direct.exists():
-                # Игнорируем temp_credentials.json - это временный файл для ZIP режима
-                if 'temp_credentials' not in str(direct):
-                    errors.append(f"GOOGLE_CREDENTIALS_FILE не найден: {direct}")
+            
+            # Игнорируем temp_credentials.json - это временный файл для ZIP режима
+            if 'temp_credentials' in str(direct):
+                # Это временный файл, не проверяем его
+                pass
+            else:
+                if not direct.is_absolute():
+                    # Относительный путь - ищем относительно BASE_DIR
+                    direct = (BASE_DIR / direct).resolve()
+                
+                if not direct.exists():
+                    # Если файл не найден по указанному пути, пробуем найти в папке проекта
+                    filename = direct.name
+                    search_paths = [
+                        BASE_DIR / filename,
+                        BASE_DIR.parent / filename,
+                        Path.cwd() / filename,
+                    ]
+                    
+                    found = False
+                    for search_path in search_paths:
+                        if search_path.exists():
+                            found = True
+                            break
+                    
+                    if not found:
+                        errors.append(
+                            f"GOOGLE_CREDENTIALS_FILE не найден: {direct}\n"
+                            f"Искали также в: {', '.join(str(p) for p in search_paths)}"
+                        )
         except Exception as e:
             # Игнорируем ошибки для temp файлов
-            if 'temp_credentials' not in str(e):
+            error_str = str(e)
+            if 'temp_credentials' not in error_str and 'GOOGLE_CREDENTIALS_FILE' not in error_str:
                 errors.append(f"Ошибка доступа к учетным данным: {e}")
     else:
         errors.append(
