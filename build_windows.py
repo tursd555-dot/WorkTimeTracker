@@ -55,6 +55,7 @@ COMMON_HIDDEN_IMPORTS = [
     'dotenv',
     'supabase',
     'supabase.client',
+    'supabase._sync',
     'postgrest',
     'realtime',
     'storage',
@@ -63,6 +64,12 @@ COMMON_HIDDEN_IMPORTS = [
     'api_adapter',
     'supabase_api',
     'sheets_api',
+    'httpx',
+    'httpx._client',
+    'httpx._transports',
+    'httpx._config',
+    'certifi',
+    'ssl',
 ]
 
 # Общие данные для включения
@@ -108,6 +115,23 @@ def check_required_files():
     
     return True
 
+def get_base_options(main_script: str, app_name: str, windowed: bool = True):
+    """Возвращает базовые опции PyInstaller для всех приложений"""
+    options = [
+        main_script,
+        f'--name={app_name}',
+        '--onedir',
+        '--windowed' if windowed else '--console',
+        '--clean',
+        '--noconfirm',
+        '--log-level=WARN',
+        '--paths=.',
+        '--collect-all', 'certifi',  # Собираем SSL сертификаты
+        '--collect-submodules', 'httpx',  # Собираем все подмодули httpx
+        '--collect-submodules', 'supabase',  # Собираем все подмодули supabase
+    ]
+    return options
+
 def build_user_app():
     """Собирает пользовательскую часть"""
     logger.info("=" * 80)
@@ -118,16 +142,7 @@ def build_user_app():
     main_script = "user_app/main.py"
     icon_file = "user_app/sberhealf.ico"
     
-    options = [
-        main_script,
-        f'--name={app_name}',
-        '--onedir',
-        '--windowed',
-        '--clean',
-        '--noconfirm',
-        '--log-level=WARN',
-        '--paths=.',
-    ]
+    options = get_base_options(main_script, app_name, windowed=True)
     
     # Иконка
     if Path(icon_file).exists():
@@ -207,16 +222,7 @@ def build_admin_app():
     main_script = "admin_app/main_admin.py"
     icon_file = "user_app/sberhealf.ico"
     
-    options = [
-        main_script,
-        f'--name={app_name}',
-        '--onedir',
-        '--windowed',
-        '--clean',
-        '--noconfirm',
-        '--log-level=WARN',
-        '--paths=.',
-    ]
+    options = get_base_options(main_script, app_name, windowed=True)
     
     # Иконка
     if Path(icon_file).exists():
@@ -284,16 +290,7 @@ def build_monitor_app():
     main_script = "admin_app/realtime_monitor.py"
     icon_file = "user_app/sberhealf.ico"
     
-    options = [
-        main_script,
-        f'--name={app_name}',
-        '--onedir',
-        '--windowed',
-        '--clean',
-        '--noconfirm',
-        '--log-level=WARN',
-        '--paths=.',
-    ]
+    options = get_base_options(main_script, app_name, windowed=True)
     
     # Иконка
     if Path(icon_file).exists():
@@ -352,16 +349,7 @@ def build_bot_app():
     main_script = "telegram_bot/main.py"
     icon_file = "user_app/sberhealf.ico"
     
-    options = [
-        main_script,
-        f'--name={app_name}',
-        '--onedir',
-        '--console',  # Бот должен показывать консоль для логов
-        '--clean',
-        '--noconfirm',
-        '--log-level=WARN',
-        '--paths=.',
-    ]
+    options = get_base_options(main_script, app_name, windowed=False)  # Бот должен показывать консоль
     
     # Иконка
     if Path(icon_file).exists():

@@ -76,6 +76,31 @@ if getattr(sys, 'frozen', False):
     if hasattr(sys, '_MEIPASS'):
         # --onedir режим: ресурсы могут быть в _MEIPASS, но данные рядом с EXE
         BASE_DIR = Path(sys.executable).parent
+        # Устанавливаем путь к SSL сертификатам для PyInstaller
+        try:
+            import certifi
+            # Ищем сертификаты в разных возможных местах
+            cert_candidates = [
+                Path(sys._MEIPASS) / 'certifi' / 'cacert.pem',
+                Path(sys._MEIPASS) / 'certifi' / 'certifi' / 'cacert.pem',
+                Path(sys._MEIPASS) / '_internal' / 'certifi' / 'cacert.pem',
+            ]
+            # Также пробуем использовать certifi.where() если доступен
+            try:
+                cert_path_from_certifi = Path(certifi.where())
+                if cert_path_from_certifi.exists():
+                    cert_candidates.insert(0, cert_path_from_certifi)
+            except:
+                pass
+            
+            for cert_path in cert_candidates:
+                if cert_path.exists():
+                    os.environ['SSL_CERT_FILE'] = str(cert_path)
+                    os.environ['REQUESTS_CA_BUNDLE'] = str(cert_path)
+                    break
+        except ImportError:
+            # certifi не найден, продолжаем без установки переменных
+            pass
     else:
         # --onefile режим (не используется, но на всякий случай)
         BASE_DIR = Path(sys.executable).parent
