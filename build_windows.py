@@ -18,6 +18,8 @@ import sys
 import logging
 import shutil
 import zipfile
+import stat
+import time
 from pathlib import Path
 from datetime import datetime
 from PyInstaller.__main__ import run
@@ -462,10 +464,54 @@ def main():
     
     # Очистка старых сборок
     logger.info("🧹 Очистка старых сборок...")
+    
+    def handle_remove_readonly(func, path, exc):
+        """Обработчик для удаления файлов с атрибутом readonly"""
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        except Exception:
+            # Если не удалось изменить права, просто пропускаем
+            pass
+    
+    def safe_remove_tree(path: Path, max_retries: int = 3):
+        """Безопасное удаление дерева с повторными попытками"""
+        for attempt in range(max_retries):
+            try:
+                if path.exists():
+                    shutil.rmtree(path, onerror=handle_remove_readonly)
+                    return True
+                return True
+            except PermissionError as e:
+                if attempt < max_retries - 1:
+                    logger.debug(f"  Попытка {attempt + 1}/{max_retries} удаления {path}...")
+                    time.sleep(1)  # Ждем секунду перед повторной попыткой
+                else:
+                    logger.warning(f"  ⚠ Не удалось удалить {path} после {max_retries} попыток: {e}")
+                    logger.warning(f"  Возможно, файлы используются другим процессом или заблокированы антивирусом")
+                    # Пытаемся переименовать папку вместо удаления
+                    try:
+                        old_name = path.name
+                        new_name = f"{old_name}_old_{int(time.time())}"
+                        path.rename(path.parent / new_name)
+                        logger.info(f"  Переименована папка {old_name} → {new_name}")
+                        return True
+                    except Exception as e2:
+                        logger.error(f"  ❌ Не удалось переименовать {path}: {e2}")
+                        return False
+            except Exception as e:
+                logger.warning(f"  ⚠ Ошибка при удалении {path}: {e}")
+                return False
+        return False
+    
     for dir_name in ['dist', 'build']:
-        if Path(dir_name).exists():
-            shutil.rmtree(dir_name)
-            logger.info(f"  Удалена директория: {dir_name}")
+        dir_path = Path(dir_name)
+        if dir_path.exists():
+            if safe_remove_tree(dir_path):
+                logger.info(f"  ✓ Очищена директория: {dir_name}")
+            else:
+                logger.warning(f"  ⚠ Директория {dir_name} не удалена, но сборка продолжится")
+                logger.warning(f"  Рекомендуется удалить папку {dir_name} вручную перед следующей сборкой")
     
     # Сборка всех компонентов
     results = {}
