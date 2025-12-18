@@ -128,10 +128,18 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)  # Создаем при импорт
 
 # ==================== Пути к файлам (credentials) ====================
 # Приоритет: ZIP рядом с EXE (+ пароль) → иначе JSON из .env
+# Пароль может быть в Windows Credential Manager (keyring) или в переменной окружения
 CREDENTIALS_ZIP_NAME = os.getenv("CREDENTIALS_ZIP_NAME", "secret_creds.zip")
 CREDENTIALS_ZIP = BASE_DIR / CREDENTIALS_ZIP_NAME
-CREDENTIALS_ZIP_PASSWORD = os.getenv("CREDENTIALS_ZIP_PASSWORD", "")
 GOOGLE_CREDENTIALS_FILE_ENV = (os.getenv("GOOGLE_CREDENTIALS_FILE") or "").strip()
+
+# Получаем пароль: сначала из keyring, потом из env
+try:
+    from shared.credentials_storage import get_credentials_password
+    CREDENTIALS_ZIP_PASSWORD = get_credentials_password() or os.getenv("CREDENTIALS_ZIP_PASSWORD", "")
+except ImportError:
+    # Fallback если модуль не доступен
+    CREDENTIALS_ZIP_PASSWORD = os.getenv("CREDENTIALS_ZIP_PASSWORD", "")
 
 # Детектируем режимы
 USE_ZIP = bool(CREDENTIALS_ZIP.exists() and CREDENTIALS_ZIP_PASSWORD)
