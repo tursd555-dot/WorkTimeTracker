@@ -5,7 +5,7 @@
 import os
 import sys
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 from typing import List, Dict, Optional, Any, Tuple
 from dataclasses import dataclass
 from pathlib import Path
@@ -165,12 +165,16 @@ class ArchiveManager:
         for header in headers:
             value = record.get(header, '')
             # Преобразуем типы данных
-            if isinstance(value, datetime):
+            if value is None:
+                value = ''
+            elif isinstance(value, datetime):
                 value = value.isoformat()
             elif isinstance(value, date):
                 value = value.isoformat()
-            elif value is None:
-                value = ''
+            elif isinstance(value, str):
+                # Если это строка, которая выглядит как дата/время, оставляем как есть
+                # или можно попробовать распарсить и переформатировать
+                value = value
             else:
                 value = str(value)
             row.append(value)
