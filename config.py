@@ -494,21 +494,39 @@ def validate_config() -> None:
     errors = []
     
     # Проверяем наличие credentials в одном из режимов
-    # Для ZIP режима проверяем только архив и пароль, не создавая временный файл
-    if USE_ZIP:
+    # Приоритет: Supabase > ZIP > JSON
+    if USE_SUPABASE_CREDENTIALS:
+        # Проверяем доступность Supabase credentials
+        try:
+            from shared.credentials_storage import get_credentials_json_from_supabase
+            creds_json = get_credentials_json_from_supabase()
+            if not creds_json:
+                errors.append("Credentials не найдены в Supabase. Загрузите их через: python tools/upload_credentials_to_supabase.py")
+            else:
+                # Проверяем валидность JSON
+                try:
+                    import json
+                    json.loads(creds_json)
+                except json.JSONDecodeError:
+                    errors.append("Невалидный JSON в Supabase credentials")
+        except Exception as e:
+            errors.append(f"Ошибка доступа к Supabase credentials: {e}")
+    elif USE_ZIP:
+        # Для ZIP режима проверяем только архив и пароль, не создавая временный файл
         if not CREDENTIALS_ZIP.exists():
             errors.append(f"Архив с учетными данными не найден: {CREDENTIALS_ZIP}")
         if not CREDENTIALS_ZIP_PASSWORD:
-            errors.append("CREDENTIALS_ZIP_PASSWORD не задан в .env")
+            errors.append("CREDENTIALS_ZIP_PASSWORD не задан в .env или keyring")
         # Проверяем, что архив можно открыть и извлечь файл
-        try:
-            import pyzipper
-            with pyzipper.AESZipFile(CREDENTIALS_ZIP) as zf:
-                zf.pwd = CREDENTIALS_ZIP_PASSWORD
-                if "service_account.json" not in zf.namelist():
-                    errors.append("Архив не содержит service_account.json")
-        except Exception as e:
-            errors.append(f"Ошибка доступа к архиву учетных данных: {e}")
+        if CREDENTIALS_ZIP.exists() and CREDENTIALS_ZIP_PASSWORD:
+            try:
+                import pyzipper
+                with pyzipper.AESZipFile(CREDENTIALS_ZIP) as zf:
+                    zf.pwd = CREDENTIALS_ZIP_PASSWORD.encode("utf-8") if isinstance(CREDENTIALS_ZIP_PASSWORD, str) else CREDENTIALS_ZIP_PASSWORD
+                    if "service_account.json" not in zf.namelist():
+                        errors.append("Архив не содержит service_account.json")
+            except Exception as e:
+                errors.append(f"Ошибка доступа к архиву учетных данных: {e}")
     elif USE_JSON_DIRECT:
         # Для прямого JSON файла проверяем его существование
         try:
