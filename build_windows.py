@@ -38,6 +38,44 @@ logger = logging.getLogger(__name__)
 ROOT_DIR = Path(__file__).parent.resolve()
 os.chdir(ROOT_DIR)
 
+def handle_remove_readonly(func, path, exc):
+    """Обработчик для удаления файлов с атрибутом read-only"""
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except Exception as e:
+        logger.debug(f"  Не удалось изменить права доступа для {path}: {e}")
+
+def safe_remove_tree(path: Path, max_retries: int = 3):
+    """Безопасное удаление дерева с повторными попытками"""
+    for attempt in range(max_retries):
+        try:
+            if path.exists():
+                shutil.rmtree(path, onerror=handle_remove_readonly)
+                return True
+            return True
+        except PermissionError as e:
+            if attempt < max_retries - 1:
+                logger.debug(f"  Попытка {attempt + 1}/{max_retries} удаления {path}...")
+                time.sleep(2)  # Увеличили задержку до 2 секунд
+            else:
+                logger.warning(f"  ⚠ Не удалось удалить {path} после {max_retries} попыток: {e}")
+                logger.warning(f"  Возможно, файлы используются другим процессом или заблокированы антивирусом")
+                # Пытаемся переименовать папку вместо удаления
+                try:
+                    old_name = path.name
+                    new_name = f"{old_name}_old_{int(time.time())}"
+                    path.rename(path.parent / new_name)
+                    logger.info(f"  Переименована папка {old_name} → {new_name}")
+                    return True
+                except Exception as e2:
+                    logger.error(f"  ❌ Не удалось переименовать {path}: {e2}")
+                    return False
+        except Exception as e:
+            logger.warning(f"  ⚠ Ошибка при удалении {path}: {e}")
+            return False
+    return False
+
 # Общие зависимости для всех приложений
 COMMON_HIDDEN_IMPORTS = [
     'PyQt5.sip',
