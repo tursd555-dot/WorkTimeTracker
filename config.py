@@ -77,29 +77,39 @@ if getattr(sys, 'frozen', False):
         # --onedir режим: ресурсы могут быть в _MEIPASS, но данные рядом с EXE
         BASE_DIR = Path(sys.executable).parent
         # Устанавливаем путь к SSL сертификатам для PyInstaller
+        # ВАЖНО: Это должно быть сделано ДО импорта httpx/supabase
         try:
             import certifi
-            # Ищем сертификаты в разных возможных местах
-            cert_candidates = [
-                Path(sys._MEIPASS) / 'certifi' / 'cacert.pem',
-                Path(sys._MEIPASS) / 'certifi' / 'certifi' / 'cacert.pem',
-                Path(sys._MEIPASS) / '_internal' / 'certifi' / 'cacert.pem',
-            ]
-            # Также пробуем использовать certifi.where() если доступен
+            # Пробуем использовать certifi.where() - это самый надежный способ
             try:
-                cert_path_from_certifi = Path(certifi.where())
-                if cert_path_from_certifi.exists():
-                    cert_candidates.insert(0, cert_path_from_certifi)
-            except:
-                pass
-            
-            for cert_path in cert_candidates:
-                if cert_path.exists():
-                    os.environ['SSL_CERT_FILE'] = str(cert_path)
-                    os.environ['REQUESTS_CA_BUNDLE'] = str(cert_path)
-                    break
+                cert_path = certifi.where()
+                if cert_path and Path(cert_path).exists():
+                    os.environ['SSL_CERT_FILE'] = cert_path
+                    os.environ['REQUESTS_CA_BUNDLE'] = cert_path
+            except Exception:
+                # Если certifi.where() не работает, ищем вручную
+                cert_candidates = [
+                    Path(sys._MEIPASS) / 'certifi' / 'cacert.pem',
+                    Path(sys._MEIPASS) / 'certifi' / 'certifi' / 'cacert.pem',
+                    Path(sys._MEIPASS) / '_internal' / 'certifi' / 'cacert.pem',
+                    Path(sys._MEIPASS) / 'certifi' / 'certifi' / 'cacert.pem',
+                ]
+                # Также проверяем стандартные пути Windows
+                if platform.system() == "Windows":
+                    import ssl
+                    try:
+                        # Пробуем использовать системные сертификаты Windows
+                        ssl_context = ssl.create_default_context()
+                        # Если это работает, не нужно устанавливать переменные
+                    except Exception:
+                        # Если не работает, ищем certifi
+                        for cert_path in cert_candidates:
+                            if cert_path.exists():
+                                os.environ['SSL_CERT_FILE'] = str(cert_path)
+                                os.environ['REQUESTS_CA_BUNDLE'] = str(cert_path)
+                                break
         except ImportError:
-            # certifi не найден, продолжаем без установки переменных
+            # certifi не найден, используем системные сертификаты
             pass
     else:
         # --onefile режим (не используется, но на всякий случай)
@@ -406,9 +416,13 @@ def validate_config() -> None:
             if not direct.is_absolute():
                 direct = (BASE_DIR / direct).resolve()
             if not direct.exists():
-                errors.append(f"GOOGLE_CREDENTIALS_FILE не найден: {direct}")
+                # Игнорируем temp_credentials.json - это временный файл для ZIP режима
+                if 'temp_credentials' not in str(direct):
+                    errors.append(f"GOOGLE_CREDENTIALS_FILE не найден: {direct}")
         except Exception as e:
-            errors.append(f"Ошибка доступа к учетным данным: {e}")
+            # Игнорируем ошибки для temp файлов
+            if 'temp_credentials' not in str(e):
+                errors.append(f"Ошибка доступа к учетным данным: {e}")
     else:
         errors.append(
             "Не настроены учетные данные. Укажите CREDENTIALS_ZIP_PASSWORD для ZIP архива "

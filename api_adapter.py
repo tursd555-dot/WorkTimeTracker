@@ -3,10 +3,12 @@ API Adapter - Переключение между Google Sheets и Supabase
 Без изменения кода приложений!
 """
 import os
+import sys
 import logging
 from pathlib import Path
 
 # Загружаем .env файл ПЕРЕД чтением переменных окружения
+# ВАЖНО: Также устанавливаем SSL сертификаты ДО импорта supabase/httpx
 try:
     from dotenv import load_dotenv
     
@@ -26,6 +28,17 @@ try:
 except ImportError:
     # dotenv не установлен, продолжаем без него
     pass
+
+# Устанавливаем SSL сертификаты для PyInstaller (если нужно)
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    try:
+        import certifi
+        cert_path = certifi.where()
+        if cert_path and Path(cert_path).exists():
+            os.environ.setdefault('SSL_CERT_FILE', cert_path)
+            os.environ.setdefault('REQUESTS_CA_BUNDLE', cert_path)
+    except (ImportError, Exception):
+        pass
 
 logger = logging.getLogger(__name__)
 

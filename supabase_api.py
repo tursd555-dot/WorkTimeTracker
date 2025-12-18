@@ -3,10 +3,29 @@ Supabase API для WorkTimeTracker - УПРОЩЕННАЯ ВЕРСИЯ
 Совместимый интерфейс с sheets_api.py
 """
 import os
+import sys
 import logging
+from pathlib import Path
 from typing import List, Dict, Optional, Any
 from datetime import datetime, date, timezone
 from dataclasses import dataclass
+
+# Устанавливаем SSL сертификаты ДО импорта supabase (для PyInstaller)
+if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+    try:
+        import certifi
+        cert_path = certifi.where()
+        if cert_path and Path(cert_path).exists():
+            os.environ.setdefault('SSL_CERT_FILE', cert_path)
+            os.environ.setdefault('REQUESTS_CA_BUNDLE', cert_path)
+    except (ImportError, Exception):
+        # Если certifi не найден, пробуем использовать системные сертификаты
+        try:
+            import ssl
+            # Пробуем создать контекст - если работает, значит системные сертификаты доступны
+            ssl.create_default_context()
+        except Exception:
+            pass
 
 logger = logging.getLogger(__name__)
 
