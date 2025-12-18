@@ -24,8 +24,10 @@ ARCHIVE_DELETE_AFTER=1
 # Размер батча для экспорта
 ARCHIVE_BATCH_SIZE=1000
 
-# ID Google Таблицы для архива (если не указан, используется GOOGLE_SHEET_ID)
-GOOGLE_ARCHIVE_SHEET_ID=your_archive_sheet_id_here
+# ID Google Таблицы для архива
+# Приоритет: GOOGLE_ARCHIVE_SHEET_ID > GOOGLE_SHEET_ID > SPREADSHEET_ID
+# Если не указан GOOGLE_ARCHIVE_SHEET_ID, используется SPREADSHEET_ID из основного проекта
+# GOOGLE_ARCHIVE_SHEET_ID=your_archive_sheet_id_here
 ```
 
 ### Таблицы для архивации
@@ -129,7 +131,10 @@ Exported batch 1/16 (1000 rows) to 'Archive_work_log'
 ## Устранение неполадок
 
 ### Ошибка: "GOOGLE_ARCHIVE_SHEET_ID not set"
-Установите переменную окружения `GOOGLE_ARCHIVE_SHEET_ID` или `GOOGLE_SHEET_ID`
+Убедитесь, что в `.env` файле установлена одна из переменных:
+- `SPREADSHEET_ID` (основная переменная проекта)
+- `GOOGLE_SHEET_ID` 
+- `GOOGLE_ARCHIVE_SHEET_ID` (для отдельной таблицы архива)
 
 ### Ошибка: "Failed to export records"
 - Проверьте доступность Google Sheets API

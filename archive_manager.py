@@ -3,11 +3,31 @@
 Экономит место на бесплатном тарифе Supabase
 """
 import os
+import sys
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional, Any, Tuple
 from dataclasses import dataclass
 from pathlib import Path
+
+# Загружаем переменные окружения из .env файла
+try:
+    from dotenv import load_dotenv
+    # Ищем .env файл в текущей директории и директории скрипта
+    env_paths = [
+        Path.cwd() / ".env",
+        Path(__file__).parent / ".env",
+    ]
+    for env_path in env_paths:
+        if env_path.exists():
+            load_dotenv(env_path)
+            break
+    else:
+        # Если не нашли, пробуем стандартную загрузку
+        load_dotenv()
+except ImportError:
+    # dotenv не установлен, продолжаем без него
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +69,13 @@ class ArchiveConfig:
             ]
         
         # Получаем ID таблицы из переменных окружения
+        # Проверяем в порядке приоритета: GOOGLE_ARCHIVE_SHEET_ID > GOOGLE_SHEET_ID > SPREADSHEET_ID
         if not self.archive_sheet_id:
-            self.archive_sheet_id = os.getenv("GOOGLE_ARCHIVE_SHEET_ID") or os.getenv("GOOGLE_SHEET_ID")
+            self.archive_sheet_id = (
+                os.getenv("GOOGLE_ARCHIVE_SHEET_ID") or 
+                os.getenv("GOOGLE_SHEET_ID") or 
+                os.getenv("SPREADSHEET_ID")
+            )
 
 
 @dataclass
@@ -83,7 +108,7 @@ class ArchiveManager:
         # Проверяем наличие Google Sheet ID
         if not self.config.archive_sheet_id:
             raise ValueError(
-                "GOOGLE_ARCHIVE_SHEET_ID or GOOGLE_SHEET_ID must be set in environment variables"
+                "GOOGLE_ARCHIVE_SHEET_ID, GOOGLE_SHEET_ID, or SPREADSHEET_ID must be set in environment variables (.env file)"
             )
         
         self.supabase: SupabaseAPI = get_supabase_api()
@@ -115,7 +140,7 @@ class ArchiveManager:
                 else:
                     sheet_id = self.config.archive_sheet_id
                     if not sheet_id:
-                        raise ValueError("GOOGLE_ARCHIVE_SHEET_ID or GOOGLE_SHEET_ID not set")
+                        raise ValueError("GOOGLE_ARCHIVE_SHEET_ID, GOOGLE_SHEET_ID, or SPREADSHEET_ID not set")
                     spreadsheet = self.sheets.client.open_by_key(sheet_id)
                 
                 # Создаем новый лист
