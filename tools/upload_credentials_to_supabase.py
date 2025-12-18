@@ -11,12 +11,52 @@
 """
 
 import sys
+import os
 import json
 from pathlib import Path
 
 # Добавляем корень проекта в путь
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+
+# Загружаем переменные окружения из .env ПЕРЕД импортом модулей
+try:
+    from dotenv import load_dotenv
+    # Ищем .env файл
+    env_candidates = [
+        PROJECT_ROOT / ".env",
+        Path.cwd() / ".env",
+    ]
+    for env_path in env_candidates:
+        if env_path.exists():
+            load_dotenv(env_path, override=False)
+            break
+    else:
+        load_dotenv()
+except ImportError:
+    pass
+
+# Устанавливаем переменные Supabase из config.py если они не заданы
+try:
+    # Импортируем config для получения значений Supabase
+    import config
+    
+    # Берем значения из config.py (они уже установлены там)
+    if not os.getenv("SUPABASE_URL"):
+        # Значение из config.py уже установлено через os.environ.setdefault
+        # Но на всякий случай проверяем еще раз
+        supabase_url = os.getenv("SUPABASE_URL", "https://jtgaobxbwibjcvasefzi.supabase.co")
+        os.environ["SUPABASE_URL"] = supabase_url
+    
+    if not os.getenv("SUPABASE_KEY"):
+        # Пробуем получить из переменных окружения или использовать значение по умолчанию
+        # ВАЖНО: Замените на ваш реальный ключ!
+        print("⚠️  SUPABASE_KEY не найден в переменных окружения")
+        print("   Укажите его в .env файле или введите сейчас:")
+        print("   Пример: export SUPABASE_KEY='ваш_ключ'")
+        print("   Или добавьте в .env: SUPABASE_KEY=ваш_ключ")
+except Exception as e:
+    print(f"⚠️  Предупреждение при загрузке config: {e}")
 
 from shared.credentials_storage import save_credentials_json_to_supabase
 

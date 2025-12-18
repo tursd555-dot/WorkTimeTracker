@@ -85,9 +85,20 @@ def get_credentials_json_from_supabase() -> Optional[str]:
         JSON строка с credentials или None
     """
     try:
-        from supabase_api import get_supabase_api
+        # Убеждаемся, что переменные окружения загружены
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
         
-        api = get_supabase_api()
+        if not supabase_url or not supabase_key:
+            logger.debug("SUPABASE_URL и SUPABASE_KEY не заданы")
+            return None
+        
+        from supabase_api import SupabaseAPI, SupabaseConfig
+        
+        # Создаем конфигурацию напрямую
+        config = SupabaseConfig(url=supabase_url, key=supabase_key)
+        api = SupabaseAPI(config)
+        
         if not hasattr(api, 'client'):
             return None
         
@@ -168,9 +179,21 @@ def save_credentials_json_to_supabase(credentials_json: str) -> bool:
         True если успешно сохранено
     """
     try:
-        from supabase_api import get_supabase_api
+        # Убеждаемся, что переменные окружения загружены
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
         
-        api = get_supabase_api()
+        if not supabase_url or not supabase_key:
+            logger.error("SUPABASE_URL и SUPABASE_KEY должны быть заданы в переменных окружения")
+            logger.error("Проверьте .env файл или config.py")
+            return False
+        
+        from supabase_api import SupabaseAPI, SupabaseConfig
+        
+        # Создаем конфигурацию напрямую
+        config = SupabaseConfig(url=supabase_url, key=supabase_key)
+        api = SupabaseAPI(config)
+        
         if not hasattr(api, 'client'):
             return False
         
