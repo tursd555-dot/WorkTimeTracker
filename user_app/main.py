@@ -95,9 +95,15 @@ class ApplicationManager(QObject):
 
     # --- Инициализация ресурсов ---
     def _initialize_resources(self):
-        creds_path = get_credentials_file()
-        if not creds_path.exists():
-            raise FileNotFoundError(f"Credentials file not found: {creds_path}")
+        # Проверяем наличие учетных данных (для ZIP режима проверяем архив, для JSON - файл)
+        from config import USE_ZIP, CREDENTIALS_ZIP
+        if USE_ZIP:
+            if not CREDENTIALS_ZIP.exists():
+                raise FileNotFoundError(f"Credentials archive not found: {CREDENTIALS_ZIP}")
+        else:
+            creds_path = get_credentials_file()
+            if not creds_path.exists():
+                raise FileNotFoundError(f"Credentials file not found: {creds_path}")
         
         # Инициализация клиента Google Sheets
         try:

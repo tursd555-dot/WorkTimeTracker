@@ -71,7 +71,14 @@ import tempfile
 # ==================== Базовые настройки ====================
 if getattr(sys, 'frozen', False):
     # Режим сборки (PyInstaller)
-    BASE_DIR = Path(sys.executable).parent
+    # Для --onedir: sys.executable находится в папке с EXE
+    # Для --onefile: sys.executable - это сам EXE файл
+    if hasattr(sys, '_MEIPASS'):
+        # --onedir режим: ресурсы могут быть в _MEIPASS, но данные рядом с EXE
+        BASE_DIR = Path(sys.executable).parent
+    else:
+        # --onefile режим (не используется, но на всякий случай)
+        BASE_DIR = Path(sys.executable).parent
 else:
     # Режим разработки
     BASE_DIR = Path(__file__).parent.absolute()
@@ -167,9 +174,22 @@ def credentials_path() -> Generator[Path, None, None]:
         raise RuntimeError("Не удалось определить путь к credentials (ни ZIP, ни JSON).")
 
 def get_credentials_file() -> Path:
-    """Обратная совместимость: получить путь к JSON (извлечёт при первом вызове)."""
-    with credentials_path() as p:
-        return Path(p)
+    """
+    Обратная совместимость: получить путь к JSON.
+    
+    В режиме ZIP возвращает путь к архиву (реальный файл создается через credentials_path()).
+    В режиме JSON возвращает путь к файлу.
+    """
+    if USE_JSON_DIRECT:
+        # Для прямого JSON файла просто возвращаем путь
+        direct = Path(GOOGLE_CREDENTIALS_FILE_ENV)
+        if not direct.is_absolute():
+            direct = (BASE_DIR / direct).resolve()
+        return direct
+    else:
+        # Для ZIP режима возвращаем путь к архиву
+        # Реальный JSON файл будет создан временно при использовании credentials_path()
+        return CREDENTIALS_ZIP
 
 # ==================== Пути локальной SQLite-БД (основной и резервный) ====================
 # Основной — рядом с проектом (local_backup.db),
@@ -339,25 +359,38 @@ def validate_config() -> None:
     errors = []
     
     # Проверяем наличие credentials в одном из режимов
-    try:
-        with credentials_path() as creds_file:
-            if not creds_file.exists():
-                errors.append(f"Файл учетных данных не найден: {creds_file}")
-    except Exception as e:
-        errors.append(f"Ошибка доступа к учетным данным: {e}")
-
-    # Проверим выбранную стратегию
+    # Для ZIP режима проверяем только архив и пароль, не создавая временный файл
     if USE_ZIP:
         if not CREDENTIALS_ZIP.exists():
-            errors.append(f"Архив с ключом не найден: {CREDENTIALS_ZIP}")
+            errors.append(f"Архив с учетными данными не найден: {CREDENTIALS_ZIP}")
         if not CREDENTIALS_ZIP_PASSWORD:
             errors.append("CREDENTIALS_ZIP_PASSWORD не задан в .env")
-    elif not USE_JSON_DIRECT:
+        # Проверяем, что архив можно открыть и извлечь файл
+        try:
+            import pyzipper
+            with pyzipper.AESZipFile(CREDENTIALS_ZIP) as zf:
+                zf.pwd = CREDENTIALS_ZIP_PASSWORD
+                if "service_account.json" not in zf.namelist():
+                    errors.append("Архив не содержит service_account.json")
+        except Exception as e:
+            errors.append(f"Ошибка доступа к архиву учетных данных: {e}")
+    elif USE_JSON_DIRECT:
+        # Для прямого JSON файла проверяем его существование
+        try:
+            direct = Path(GOOGLE_CREDENTIALS_FILE_ENV)
+            if not direct.is_absolute():
+                direct = (BASE_DIR / direct).resolve()
+            if not direct.exists():
+                errors.append(f"GOOGLE_CREDENTIALS_FILE не найден: {direct}")
+        except Exception as e:
+            errors.append(f"Ошибка доступа к учетным данным: {e}")
+    else:
         errors.append(
-            "Ни ZIP+пароль, ни GOOGLE_CREDENTIALS_FILE не заданы. "
-            "Ожидается архив рядом с EXE и CREDENTIALS_ZIP_PASSWORD в .env, "
-            "или переменная GOOGLE_CREDENTIALS_FILE."
+            "Не настроены учетные данные. Укажите CREDENTIALS_ZIP_PASSWORD для ZIP архива "
+            "или GOOGLE_CREDENTIALS_FILE для прямого JSON файла."
         )
+
+    # Дополнительная проверка выбранной стратегии (дублирование убрано выше)
     
     if not LOG_DIR.exists():
         try:
