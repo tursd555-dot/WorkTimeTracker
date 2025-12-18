@@ -295,6 +295,32 @@ TELEGRAM_ALERTS_ENABLED: bool = bool(TELEGRAM_BOT_TOKEN and (TELEGRAM_ADMIN_CHAT
 # ==================== Архивирование ====================
 ARCHIVE_DELETE_SOURCE_ROWS: bool = os.getenv("ARCHIVE_DELETE_SOURCE_ROWS", "1") == "1"
 
+# Настройки автоматической архивации данных из Supabase в Google Таблицы
+# Возраст данных для архивации (дни) - данные старше этого возраста будут архивированы
+ARCHIVE_AGE_DAYS: int = int(os.getenv("ARCHIVE_AGE_DAYS", "90"))
+
+# Удалять ли данные из Supabase после успешной архивации в Google Sheets
+ARCHIVE_DELETE_AFTER: bool = os.getenv("ARCHIVE_DELETE_AFTER", "1") == "1"
+
+# Размер батча для экспорта в Google Sheets
+ARCHIVE_BATCH_SIZE: int = int(os.getenv("ARCHIVE_BATCH_SIZE", "1000"))
+
+# ID Google Таблицы для архива (если не указан, используется GOOGLE_SHEET_ID)
+GOOGLE_ARCHIVE_SHEET_ID: str | None = os.getenv("GOOGLE_ARCHIVE_SHEET_ID") or None
+
+# Таблицы для архивации (список таблиц Supabase)
+ARCHIVE_TABLES: List[str] = [
+    'work_log',
+    'break_log',
+    'work_sessions',
+    'violations',
+    'sync_log'
+]
+
+# Расписание архивации (cron формат или "daily", "weekly")
+# Примеры: "0 2 * * *" (каждый день в 2:00), "daily", "weekly"
+ARCHIVE_SCHEDULE: str = os.getenv("ARCHIVE_SCHEDULE", "daily")
+
 # ==================== Пороги правил уведомлений ====================
 # опоздание на логин, минут
 LATE_LOGIN_MINUTES: int = int(os.getenv("LATE_LOGIN_MINUTES", "15"))
