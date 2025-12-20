@@ -413,8 +413,12 @@ class BreakManager:
     def list_schedules(self) -> List[Dict]:
         """Возвращает список всех шаблонов"""
         try:
+            # Очищаем кэш перед чтением, чтобы получить свежие данные
+            # (но сохраняем кэш для get_schedule, так как он используется для проверки)
             ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
             rows = self.sheets._read_table(ws)
+            
+            logger.debug(f"Reading schedules from database, got {len(rows)} rows")
             
             # Группируем по name для Supabase (где name используется как идентификатор шаблона)
             # В Supabase каждая запись имеет свой UUID, но шаблоны группируются по name
@@ -461,6 +465,7 @@ class BreakManager:
                         "shift_end": shift_end,
                         "slots_data": []  # Инициализируем список слотов
                     }
+                    logger.debug(f"Created schedule entry: name={name}, shift_start={shift_start}, shift_end={shift_end}, schedule_id={sid}")
                 
                 # Добавляем слот в список слотов шаблона
                 slot_type = row.get("SlotType") or row.get("slot_type") or ""

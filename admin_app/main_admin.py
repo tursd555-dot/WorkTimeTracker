@@ -703,18 +703,29 @@ class AdminWindow(QMainWindow):
             return
         from admin_app.break_schedule_dialog import BreakScheduleDialog
         schedule_id = self.templates_table.item(row, 0).text()
+        name = self.templates_table.item(row, 1).text()  # Получаем name из таблицы
 
-        # Получаем текущие данные шаблона
+        # Очищаем кэш для этого шаблона перед получением данных
+        self.break_mgr._cache.pop(schedule_id, None)
+        self.break_mgr._cache.pop(name, None)
+        
+        # Получаем текущие данные шаблона (свежие из базы)
         all_templates = self.break_mgr.list_schedule_templates()
         current = None
         for t in all_templates:
-            if str(t.get("schedule_id")) == str(schedule_id):
+            # Ищем по schedule_id или по name (для совместимости)
+            if (str(t.get("schedule_id")) == str(schedule_id) or 
+                str(t.get("name")) == str(name)):
                 current = t
                 break
 
         if not current:
             self._warn(f"Не удалось найти данные шаблона {schedule_id}.")
             return
+        
+        # Логируем для отладки
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Editing template: schedule_id={schedule_id}, name={name}, shift_start={current.get('shift_start')}, shift_end={current.get('shift_end')}")
 
         dlg = BreakScheduleDialog(self, template_data=current)
 
