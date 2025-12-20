@@ -71,7 +71,49 @@ import tempfile
 # ==================== Базовые настройки ====================
 if getattr(sys, 'frozen', False):
     # Режим сборки (PyInstaller)
-    BASE_DIR = Path(sys.executable).parent
+    # Для --onedir: sys.executable находится в папке с EXE
+    # Для --onefile: sys.executable - это сам EXE файл
+    if hasattr(sys, '_MEIPASS'):
+        # --onedir режим: ресурсы могут быть в _MEIPASS, но данные рядом с EXE
+        BASE_DIR = Path(sys.executable).parent
+        # Устанавливаем путь к SSL сертификатам для PyInstaller
+        # ВАЖНО: Это должно быть сделано ДО импорта httpx/supabase
+        try:
+            import certifi
+            # Пробуем использовать certifi.where() - это самый надежный способ
+            try:
+                cert_path = certifi.where()
+                if cert_path and Path(cert_path).exists():
+                    os.environ['SSL_CERT_FILE'] = cert_path
+                    os.environ['REQUESTS_CA_BUNDLE'] = cert_path
+            except Exception:
+                # Если certifi.where() не работает, ищем вручную
+                cert_candidates = [
+                    Path(sys._MEIPASS) / 'certifi' / 'cacert.pem',
+                    Path(sys._MEIPASS) / 'certifi' / 'certifi' / 'cacert.pem',
+                    Path(sys._MEIPASS) / '_internal' / 'certifi' / 'cacert.pem',
+                    Path(sys._MEIPASS) / 'certifi' / 'certifi' / 'cacert.pem',
+                ]
+                # Также проверяем стандартные пути Windows
+                if platform.system() == "Windows":
+                    import ssl
+                    try:
+                        # Пробуем использовать системные сертификаты Windows
+                        ssl_context = ssl.create_default_context()
+                        # Если это работает, не нужно устанавливать переменные
+                    except Exception:
+                        # Если не работает, ищем certifi
+                        for cert_path in cert_candidates:
+                            if cert_path.exists():
+                                os.environ['SSL_CERT_FILE'] = str(cert_path)
+                                os.environ['REQUESTS_CA_BUNDLE'] = str(cert_path)
+                                break
+        except ImportError:
+            # certifi не найден, используем системные сертификаты
+            pass
+    else:
+        # --onefile режим (не используется, но на всякий случай)
+        BASE_DIR = Path(sys.executable).parent
 else:
     # Режим разработки
     BASE_DIR = Path(__file__).parent.absolute()
@@ -86,23 +128,54 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)  # Создаем при импорт
 
 # ==================== Пути к файлам (credentials) ====================
 # Приоритет: ZIP рядом с EXE (+ пароль) → иначе JSON из .env
+# Пароль может быть в Windows Credential Manager (keyring) или в переменной окружения
 CREDENTIALS_ZIP_NAME = os.getenv("CREDENTIALS_ZIP_NAME", "secret_creds.zip")
 CREDENTIALS_ZIP = BASE_DIR / CREDENTIALS_ZIP_NAME
-CREDENTIALS_ZIP_PASSWORD = os.getenv("CREDENTIALS_ZIP_PASSWORD", "")
 GOOGLE_CREDENTIALS_FILE_ENV = (os.getenv("GOOGLE_CREDENTIALS_FILE") or "").strip()
 
-# Детектируем режимы
-USE_ZIP = bool(CREDENTIALS_ZIP.exists() and CREDENTIALS_ZIP_PASSWORD)
-USE_JSON_DIRECT = bool(GOOGLE_CREDENTIALS_FILE_ENV and not USE_ZIP)
+# Получаем пароль: сначала из keyring, потом из env
+def _get_credentials_password():
+    """Получить пароль от credentials (keyring > env)"""
+    try:
+        from shared.credentials_storage import get_credentials_password
+        password = get_credentials_password()
+        if password:
+            return password
+    except ImportError:
+        pass
+    # Fallback на переменную окружения
+    return os.getenv("CREDENTIALS_ZIP_PASSWORD", "")
+
+CREDENTIALS_ZIP_PASSWORD = _get_credentials_password()
+
+# Детектируем режимы (приоритет: Supabase > локальный JSON > ZIP)
+# Проверяем Supabase credentials только если Supabase используется
+USE_SUPABASE_CREDENTIALS = False
+if USE_SUPABASE:  # USE_SUPABASE определен выше в файле
+    try:
+        from shared.credentials_storage import get_credentials_json_from_supabase
+        supabase_creds = get_credentials_json_from_supabase()
+        USE_SUPABASE_CREDENTIALS = bool(supabase_creds)
+        if USE_SUPABASE_CREDENTIALS:
+            import logging
+            logging.getLogger(__name__).info("✓ Credentials будут загружены из Supabase")
+    except Exception as e:
+        # Если произошла ошибка при загрузке из Supabase, просто не используем этот режим
+        # Это нормально, если credentials еще не загружены в Supabase
+        USE_SUPABASE_CREDENTIALS = False
+
+USE_ZIP = bool(CREDENTIALS_ZIP.exists() and CREDENTIALS_ZIP_PASSWORD) and not USE_SUPABASE_CREDENTIALS
+USE_JSON_DIRECT = bool(GOOGLE_CREDENTIALS_FILE_ENV and not USE_ZIP and not USE_SUPABASE_CREDENTIALS)
 
 if USE_ZIP:
     CREDENTIALS_ZIP_PASSWORD = CREDENTIALS_ZIP_PASSWORD.encode("utf-8")
-elif not USE_JSON_DIRECT:
-    # Ни ZIP+пароля, ни JSON-пути
+elif not USE_JSON_DIRECT and not USE_SUPABASE_CREDENTIALS:
+    # Ни Supabase, ни ZIP+пароля, ни JSON-пути
     raise RuntimeError(
-        "Учетные данные не найдены. Положи зашифрованный архив рядом с EXE "
-        f"({CREDENTIALS_ZIP_NAME}) и укажи CREDENTIALS_ZIP_PASSWORD в .env, "
-        "или укажи GOOGLE_CREDENTIALS_FILE."
+        "Учетные данные не найдены. Варианты:\n"
+        "1. Сохраните credentials в Supabase (таблица или Storage)\n"
+        "2. Положите JSON файл рядом с EXE и укажите GOOGLE_CREDENTIALS_FILE в .env\n"
+        f"3. Положите зашифрованный архив ({CREDENTIALS_ZIP_NAME}) и укажите CREDENTIALS_ZIP_PASSWORD"
     )
 
 # --- Ленивая загрузка credentials ---
@@ -127,11 +200,32 @@ def credentials_path() -> Generator[Path, None, None]:
     """
     Возвращает путь к service_account.json.
     Приоритет:
-      1) ZIP рядом с EXE + CREDENTIALS_ZIP_PASSWORD
-      2) GOOGLE_CREDENTIALS_FILE из .env (может быть относительным путём)
+      1) Supabase (таблица или Storage)
+      2) ZIP рядом с EXE + CREDENTIALS_ZIP_PASSWORD
+      3) GOOGLE_CREDENTIALS_FILE из .env (может быть относительным путём)
     Используйте: with credentials_path() as p: ...
     """
     global _CRED_MEMORY
+    
+    # Приоритет 1: Supabase
+    if USE_SUPABASE_CREDENTIALS:
+        try:
+            from shared.credentials_storage import get_credentials_json_from_supabase
+            creds_json = get_credentials_json_from_supabase()
+            if creds_json:
+                # Создаем временный файл
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as tmp:
+                    tmp.write(creds_json)
+                    tmp_name = Path(tmp.name)
+                try:
+                    yield tmp_name
+                finally:
+                    tmp_name.unlink(missing_ok=True)
+                return
+        except Exception as e:
+            logger.warning(f"Не удалось загрузить credentials из Supabase: {e}")
+            # Fallback на другие методы
+    
     if USE_ZIP:
         zip_path = CREDENTIALS_ZIP
         if not zip_path.exists():
@@ -158,18 +252,86 @@ def credentials_path() -> Generator[Path, None, None]:
             tmp_name.unlink(missing_ok=True)
     elif USE_JSON_DIRECT:
         direct = Path(GOOGLE_CREDENTIALS_FILE_ENV)
+        
+        # Игнорируем temp_credentials.json - это временный файл для ZIP режима
+        if 'temp_credentials' in str(direct):
+            raise RuntimeError("temp_credentials.json не должен использоваться напрямую. Используйте ZIP режим или укажите правильный путь к credentials.")
+        
         if not direct.is_absolute():
+            # Относительный путь - ищем относительно BASE_DIR
             direct = (BASE_DIR / direct).resolve()
+        
         if not direct.exists():
-            raise FileNotFoundError(f"GOOGLE_CREDENTIALS_FILE не найден: {direct}")
+            # Если файл не найден по указанному пути, пробуем найти в папке проекта
+            filename = direct.name
+            search_paths = [
+                BASE_DIR / filename,
+                BASE_DIR.parent / filename,
+                Path.cwd() / filename,
+            ]
+            
+            found_path = None
+            for search_path in search_paths:
+                if search_path.exists():
+                    found_path = search_path
+                    break
+            
+            if found_path:
+                direct = found_path
+            else:
+                raise FileNotFoundError(
+                    f"GOOGLE_CREDENTIALS_FILE не найден: {GOOGLE_CREDENTIALS_FILE_ENV}\n"
+                    f"Искали в: {BASE_DIR}, {BASE_DIR.parent}, {Path.cwd()}"
+                )
+        
         yield direct
     else:
         raise RuntimeError("Не удалось определить путь к credentials (ни ZIP, ни JSON).")
 
 def get_credentials_file() -> Path:
-    """Обратная совместимость: получить путь к JSON (извлечёт при первом вызове)."""
-    with credentials_path() as p:
-        return Path(p)
+    """
+    Обратная совместимость: получить путь к JSON.
+    
+    Приоритет:
+      1) Supabase - возвращает временный файл (создается через credentials_path())
+      2) ZIP - возвращает путь к архиву (реальный файл создается через credentials_path())
+      3) JSON - возвращает путь к файлу (ищет в папке проекта если не найден по указанному пути)
+    """
+    if USE_SUPABASE_CREDENTIALS:
+        # Для Supabase режима нужно использовать credentials_path() для получения файла
+        # Здесь возвращаем заглушку, реальный файл будет создан при использовании
+        return Path(tempfile.gettempdir()) / "wtt_credentials_supabase.json"
+    
+    if USE_JSON_DIRECT:
+        # Для прямого JSON файла ищем в папке проекта
+        direct = Path(GOOGLE_CREDENTIALS_FILE_ENV)
+        
+        # Игнорируем temp_credentials.json
+        if 'temp_credentials' in str(direct):
+            # Возвращаем путь к архиву как fallback
+            return CREDENTIALS_ZIP
+        
+        if not direct.is_absolute():
+            direct = (BASE_DIR / direct).resolve()
+        
+        # Если файл не найден, ищем в папке проекта
+        if not direct.exists():
+            filename = direct.name
+            search_paths = [
+                BASE_DIR / filename,
+                BASE_DIR.parent / filename,
+                Path.cwd() / filename,
+            ]
+            
+            for search_path in search_paths:
+                if search_path.exists():
+                    return search_path
+        
+        return direct
+    else:
+        # Для ZIP режима возвращаем путь к архиву
+        # Реальный JSON файл будет создан временно при использовании credentials_path()
+        return CREDENTIALS_ZIP
 
 # ==================== Пути локальной SQLite-БД (основной и резервный) ====================
 # Основной — рядом с проектом (local_backup.db),
@@ -339,25 +501,85 @@ def validate_config() -> None:
     errors = []
     
     # Проверяем наличие credentials в одном из режимов
-    try:
-        with credentials_path() as creds_file:
-            if not creds_file.exists():
-                errors.append(f"Файл учетных данных не найден: {creds_file}")
-    except Exception as e:
-        errors.append(f"Ошибка доступа к учетным данным: {e}")
-
-    # Проверим выбранную стратегию
-    if USE_ZIP:
+    # Приоритет: Supabase > ZIP > JSON
+    if USE_SUPABASE_CREDENTIALS:
+        # Проверяем доступность Supabase credentials
+        try:
+            from shared.credentials_storage import get_credentials_json_from_supabase
+            creds_json = get_credentials_json_from_supabase()
+            if not creds_json:
+                errors.append("Credentials не найдены в Supabase. Загрузите их через: python tools/upload_credentials_to_supabase.py")
+            else:
+                # Проверяем валидность JSON
+                try:
+                    import json
+                    json.loads(creds_json)
+                except json.JSONDecodeError:
+                    errors.append("Невалидный JSON в Supabase credentials")
+        except Exception as e:
+            errors.append(f"Ошибка доступа к Supabase credentials: {e}")
+    elif USE_ZIP:
+        # Для ZIP режима проверяем только архив и пароль, не создавая временный файл
         if not CREDENTIALS_ZIP.exists():
-            errors.append(f"Архив с ключом не найден: {CREDENTIALS_ZIP}")
+            errors.append(f"Архив с учетными данными не найден: {CREDENTIALS_ZIP}")
         if not CREDENTIALS_ZIP_PASSWORD:
-            errors.append("CREDENTIALS_ZIP_PASSWORD не задан в .env")
-    elif not USE_JSON_DIRECT:
+            errors.append("CREDENTIALS_ZIP_PASSWORD не задан в .env или keyring")
+        # Проверяем, что архив можно открыть и извлечь файл
+        if CREDENTIALS_ZIP.exists() and CREDENTIALS_ZIP_PASSWORD:
+            try:
+                import pyzipper
+                with pyzipper.AESZipFile(CREDENTIALS_ZIP) as zf:
+                    zf.pwd = CREDENTIALS_ZIP_PASSWORD.encode("utf-8") if isinstance(CREDENTIALS_ZIP_PASSWORD, str) else CREDENTIALS_ZIP_PASSWORD
+                    if "service_account.json" not in zf.namelist():
+                        errors.append("Архив не содержит service_account.json")
+            except Exception as e:
+                errors.append(f"Ошибка доступа к архиву учетных данных: {e}")
+    elif USE_JSON_DIRECT:
+        # Для прямого JSON файла проверяем его существование
+        try:
+            direct = Path(GOOGLE_CREDENTIALS_FILE_ENV)
+            
+            # Игнорируем temp_credentials.json - это временный файл для ZIP режима
+            if 'temp_credentials' in str(direct):
+                # Это временный файл, не проверяем его
+                pass
+            else:
+                if not direct.is_absolute():
+                    # Относительный путь - ищем относительно BASE_DIR
+                    direct = (BASE_DIR / direct).resolve()
+                
+                if not direct.exists():
+                    # Если файл не найден по указанному пути, пробуем найти в папке проекта
+                    filename = direct.name
+                    search_paths = [
+                        BASE_DIR / filename,
+                        BASE_DIR.parent / filename,
+                        Path.cwd() / filename,
+                    ]
+                    
+                    found = False
+                    for search_path in search_paths:
+                        if search_path.exists():
+                            found = True
+                            break
+                    
+                    if not found:
+                        errors.append(
+                            f"GOOGLE_CREDENTIALS_FILE не найден: {direct}\n"
+                            f"Искали также в: {', '.join(str(p) for p in search_paths)}"
+                        )
+        except Exception as e:
+            # Игнорируем ошибки для temp файлов
+            error_str = str(e)
+            if 'temp_credentials' not in error_str and 'GOOGLE_CREDENTIALS_FILE' not in error_str:
+                errors.append(f"Ошибка доступа к учетным данным: {e}")
+    else:
         errors.append(
-            "Ни ZIP+пароль, ни GOOGLE_CREDENTIALS_FILE не заданы. "
-            "Ожидается архив рядом с EXE и CREDENTIALS_ZIP_PASSWORD в .env, "
-            "или переменная GOOGLE_CREDENTIALS_FILE."
+            "Не настроены учетные данные. Укажите CREDENTIALS_ZIP_PASSWORD для ZIP архива "
+            "или GOOGLE_CREDENTIALS_FILE для прямого JSON файла."
         )
+
+    # Дополнительная проверка выбранной стратегии (дублирование убрано выше)
     
     if not LOG_DIR.exists():
         try:

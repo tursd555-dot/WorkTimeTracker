@@ -95,9 +95,35 @@ class ApplicationManager(QObject):
 
     # --- Инициализация ресурсов ---
     def _initialize_resources(self):
-        creds_path = get_credentials_file()
-        if not creds_path.exists():
-            raise FileNotFoundError(f"Credentials file not found: {creds_path}")
+        logger = logging.getLogger(__name__)
+        
+        # Проверяем наличие учетных данных
+        from config import USE_ZIP, USE_SUPABASE_CREDENTIALS, CREDENTIALS_ZIP
+        
+        # Если используется Supabase, не проверяем локальные файлы
+        if USE_SUPABASE_CREDENTIALS:
+            logger.info("✓ Используются credentials из Supabase")
+            # Проверка будет выполнена при попытке загрузки из Supabase
+        elif USE_ZIP:
+            # ZIP режим - проверяем архив
+            if not CREDENTIALS_ZIP.exists():
+                raise FileNotFoundError(
+                    f"Credentials archive not found: {CREDENTIALS_ZIP}\n"
+                    "Варианты:\n"
+                    "1. Загрузите credentials в Supabase: python tools/upload_credentials_to_supabase.py service_account.json\n"
+                    "2. Положите secret_creds.zip в папку с приложением\n"
+                    "3. Укажите GOOGLE_CREDENTIALS_FILE в .env"
+                )
+        else:
+            # JSON режим - проверяем файл
+            creds_path = get_credentials_file()
+            if not creds_path.exists():
+                raise FileNotFoundError(
+                    f"Credentials file not found: {creds_path}\n"
+                    "Варианты:\n"
+                    "1. Загрузите credentials в Supabase: python tools/upload_credentials_to_supabase.py service_account.json\n"
+                    "2. Положите service_account.json в папку с приложением и укажите GOOGLE_CREDENTIALS_FILE в .env"
+                )
         
         # Инициализация клиента Google Sheets
         try:
@@ -114,7 +140,6 @@ class ApplicationManager(QObject):
         
         # Инициализация систем отказоустойчивости
         try:
-            logger = logging.getLogger(__name__)
             logger.info("=== ИНИЦИАЛИЗАЦИЯ СИСТЕМ ОТКАЗОУСТОЙЧИВОСТИ ===")
             
             # 1. Health Checker
@@ -135,15 +160,15 @@ class ApplicationManager(QObject):
             logger.info("=== СИСТЕМЫ ОТКАЗОУСТОЙЧИВОСТИ ГОТОВЫ ===")
         
         except Exception as e:
-            logger.error(f"Ошибка инициализации систем отказоустойчивости: {e}")
+            logging.getLogger(__name__).error(f"Ошибка инициализации систем отказоустойчивости: {e}")
             # Не критично - продолжаем работу без мониторинга
             self.health_checker = None
             self.degradation_manager = None
 
     # --- Фоновая синхронизация ---
     def _start_sync_service(self):
+        logger = logging.getLogger(__name__)
         try:
-            logger = logging.getLogger(__name__)
             logger.info("=== ЗАПУСК СЕРВИСА СИНХРОНИЗАЦИИ ===")
             
             # Запускаем сервис синхронизации в фоне
@@ -164,7 +189,7 @@ class ApplicationManager(QObject):
             
             logger.info("Sync service started")
         except Exception as e:
-            logger.error(f"Failed to start sync service: {e}")
+            logging.getLogger(__name__).error(f"Failed to start sync service: {e}")
 
     # --- UI потоки ---
     def show_login_window(self):

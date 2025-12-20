@@ -159,21 +159,40 @@ class BreakScheduleDialog(QDialog):
         self.schedule_id_input.setText(str(self.template_data.get("schedule_id", "")))
         self.name_input.setText(str(self.template_data.get("name", "")))
         
-        # Время смены
-        shift_start = self.template_data.get("shift_start", "09:00")
-        shift_end = self.template_data.get("shift_end", "18:00")
+        # Время смены - нормализуем формат (убираем секунды если есть)
+        shift_start_raw = self.template_data.get("shift_start", "09:00")
+        shift_end_raw = self.template_data.get("shift_end", "18:00")
+        
+        # Нормализуем время (09:00:00 -> 09:00)
+        def normalize_time_str(t_str):
+            if not t_str:
+                return "09:00"
+            t_str = str(t_str).strip()
+            if ':' in t_str and t_str.count(':') == 2:
+                # Убираем секунды
+                t_str = ':'.join(t_str.split(':')[:2])
+            return t_str
+        
+        shift_start = normalize_time_str(shift_start_raw)
+        shift_end = normalize_time_str(shift_end_raw)
+        
+        logger.debug(f"Loading template data: shift_start={shift_start_raw} -> {shift_start}, shift_end={shift_end_raw} -> {shift_end}")
         
         try:
             h, m = map(int, shift_start.split(":"))
             self.shift_start_input.setTime(QTime(h, m))
-        except:
-            pass
+            logger.debug(f"Set shift_start to {h:02d}:{m:02d}")
+        except Exception as e:
+            logger.warning(f"Failed to parse shift_start '{shift_start}': {e}")
+            self.shift_start_input.setTime(QTime(9, 0))
         
         try:
             h, m = map(int, shift_end.split(":"))
             self.shift_end_input.setTime(QTime(h, m))
-        except:
-            pass
+            logger.debug(f"Set shift_end to {h:02d}:{m:02d}")
+        except Exception as e:
+            logger.warning(f"Failed to parse shift_end '{shift_end}': {e}")
+            self.shift_end_input.setTime(QTime(18, 0))
         
         # Слоты
         slots = self.template_data.get("slots_data", [])
