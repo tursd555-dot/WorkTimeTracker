@@ -451,18 +451,42 @@ class SupabaseAPI:
                     # Но НЕ создаем её здесь - она будет создана отдельно перед всеми слотами
                     # Здесь только проверяем и обновляем, если нужно
                     if main_record:
+                        # Нормализуем время для сравнения (убираем секунды если есть)
+                        def normalize_time(t):
+                            if not t:
+                                return None
+                            t_str = str(t).strip()
+                            # Убираем секунды если есть (09:00:00 -> 09:00)
+                            if ':' in t_str and t_str.count(':') == 2:
+                                t_str = ':'.join(t_str.split(':')[:2])
+                            return t_str
+                        
+                        current_start = normalize_time(main_record.get('shift_start'))
+                        current_end = normalize_time(main_record.get('shift_end'))
+                        new_start = normalize_time(shift_start)
+                        new_end = normalize_time(shift_end)
+                        
                         # Обновляем shift_start и shift_end основной записи, если они изменились
                         update_data = {}
-                        if shift_start and main_record.get('shift_start') != shift_start:
+                        if new_start and current_start != new_start:
                             update_data['shift_start'] = shift_start
-                        if shift_end and main_record.get('shift_end') != shift_end:
+                        if new_end and current_end != new_end:
                             update_data['shift_end'] = shift_end
+                        
+                        # ВАЖНО: всегда обновляем, даже если значения кажутся одинаковыми
+                        # Это гарантирует, что значения будут обновлены при вызове из update_schedule_template
+                        if shift_start or shift_end:
+                            if 'shift_start' not in update_data and shift_start:
+                                update_data['shift_start'] = shift_start
+                            if 'shift_end' not in update_data and shift_end:
+                                update_data['shift_end'] = shift_end
+                        
                         if update_data:
                             self.client.table('break_schedules')\
                                 .update(update_data)\
                                 .eq('id', main_record['id'])\
                                 .execute()
-                            logger.debug(f"Updated main schedule record: {update_data}")
+                            logger.info(f"Updated main schedule record shift times: {update_data} (was: start={current_start}, end={current_end})")
                     
                     # Сохраняем слот как отдельную строку в break_schedules
                     # Используем поле description для хранения данных слота в JSON формате

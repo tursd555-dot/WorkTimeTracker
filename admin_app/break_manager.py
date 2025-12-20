@@ -325,6 +325,8 @@ class BreakManager:
                     ])
             
             # Записываем все строки
+            # ВАЖНО: для Supabase основная запись уже обновлена в update_schedule_template
+            # Здесь мы только создаем слоты, которые автоматически обновят основную запись при необходимости
             for row in rows:
                 self.sheets._request_with_retry(lambda: ws.append_row(row))
             
