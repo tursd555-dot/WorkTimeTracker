@@ -417,6 +417,21 @@ class BreakManager:
             # Группируем по name для Supabase (где name используется как идентификатор шаблона)
             # В Supabase каждая запись имеет свой UUID, но шаблоны группируются по name
             schedules = {}
+            
+            # Сначала проходим по всем строкам и находим основные записи (без description)
+            main_records = {}
+            for row in rows:
+                name = row.get("Name", "").strip()
+                if not name:
+                    continue
+                
+                description = row.get("Description") or row.get("description") or ""
+                # Основная запись - без description или с пустым description
+                if not description or description.strip() == '':
+                    if name not in main_records:
+                        main_records[name] = row
+            
+            # Теперь проходим по всем строкам и группируем
             for row in rows:
                 name = row.get("Name", "").strip()
                 if not name:
@@ -425,13 +440,23 @@ class BreakManager:
                 # Используем name как ключ для группировки
                 # Для schedule_id используем первый найденный UUID или name
                 if name not in schedules:
-                    # Ищем первый UUID для этого шаблона (из основной записи или первого слота)
-                    sid = row.get("ScheduleID") or row.get("Id") or row.get("id") or name
+                    # Ищем UUID из основной записи, если она есть
+                    main_record = main_records.get(name)
+                    if main_record:
+                        sid = main_record.get("ScheduleID") or main_record.get("Id") or main_record.get("id") or name
+                        shift_start = main_record.get("ShiftStart", "") or ""
+                        shift_end = main_record.get("ShiftEnd", "") or ""
+                    else:
+                        # Если основной записи нет, берем из первой строки
+                        sid = row.get("ScheduleID") or row.get("Id") or row.get("id") or name
+                        shift_start = row.get("ShiftStart", "") or ""
+                        shift_end = row.get("ShiftEnd", "") or ""
+                    
                     schedules[name] = {
                         "schedule_id": str(sid).strip(),
                         "name": name,
-                        "shift_start": row.get("ShiftStart", "") or "",
-                        "shift_end": row.get("ShiftEnd", "") or "",
+                        "shift_start": shift_start,
+                        "shift_end": shift_end,
                         "slots_data": []  # Инициализируем список слотов
                     }
                 
@@ -1460,15 +1485,21 @@ class BreakManager:
         if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
             # Для Supabase: обновляем основную запись напрямую
             try:
-                # Находим основную запись по name
+                # Находим основную запись по name (без description или с пустым description)
                 existing = self.sheets.client.table('break_schedules')\
-                    .select('id, name, shift_start, shift_end')\
+                    .select('id, name, shift_start, shift_end, description')\
                     .eq('name', name)\
-                    .is_('description', 'null')\
                     .execute()
                 
-                if existing.data:
-                    main_record = existing.data[0]
+                # Ищем основную запись (без description)
+                main_record = None
+                for record in existing.data:
+                    desc = record.get('description')
+                    if not desc or str(desc).strip() == '':
+                        main_record = record
+                        break
+                
+                if main_record:
                     # Обновляем shift_start и shift_end напрямую
                     update_data = {}
                     if shift_start:
@@ -1477,28 +1508,34 @@ class BreakManager:
                         update_data['shift_end'] = shift_end
                     
                     if update_data:
+                        logger.info(f"Updating shift times for schedule '{name}': {update_data} (current: start={main_record.get('shift_start')}, end={main_record.get('shift_end')})")
                         self.sheets.client.table('break_schedules')\
                             .update(update_data)\
                             .eq('id', main_record['id'])\
                             .execute()
-                        logger.info(f"Updated shift times for schedule '{name}': {update_data}")
+                        logger.info(f"✅ Updated shift times for schedule '{name}': {update_data}")
+                    else:
+                        logger.warning(f"No update data provided for schedule '{name}'")
                     
                     # Удаляем старые слоты (записи с description)
-                    self.sheets.client.table('break_schedules')\
+                    delete_result = self.sheets.client.table('break_schedules')\
                         .delete()\
                         .eq('name', name)\
                         .not_.is_('description', 'null')\
                         .execute()
                     
-                    logger.info(f"Deleted old slots for schedule '{name}'")
+                    logger.info(f"Deleted old slots for schedule '{name}' (count: {len(delete_result.data) if delete_result.data else 0})")
                 else:
                     logger.warning(f"Main record not found for schedule '{name}', will create new")
             except Exception as e:
                 logger.error(f"Failed to update schedule directly: {e}", exc_info=True)
                 # Fallback: удаляем и создаём заново
-                result = self.sheets._delete_rows_by_schedule_id("break_schedules", name)
-                if not result:
-                    logger.warning(f"Failed to delete old schedule {name}, continuing anyway...")
+                try:
+                    result = self.sheets._delete_rows_by_schedule_id("break_schedules", name)
+                    if not result:
+                        logger.warning(f"Failed to delete old schedule {name}, continuing anyway...")
+                except Exception as e2:
+                    logger.error(f"Failed to delete schedule as fallback: {e2}", exc_info=True)
         else:
             # Для Google Sheets удаляем по schedule_id
             result = self.delete_schedule(schedule_id)
