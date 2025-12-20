@@ -299,17 +299,21 @@ class BreakManager:
                 
                 if break_windows:
                     for window in break_windows:
+                        # ВАЖНО: используем duration из окна, если оно есть, иначе из лимита
+                        # Это позволяет сохранять индивидуальную длительность каждого слота
+                        slot_duration = window.get('duration') or limit['time_minutes']
                         rows.append([
                             schedule_id,
                             name,
                             shift_start,
                             shift_end,
                             limit['break_type'],
-                            str(limit['time_minutes']),
+                            str(slot_duration),  # Используем длительность конкретного слота
                             window.get('start', ''),
                             window.get('end', ''),
                             str(window.get('priority', 1))
                         ])
+                        logger.debug(f"Created row for slot: type={limit['break_type']}, duration={slot_duration}, window={window.get('start')}-{window.get('end')}")
                 else:
                     # Если нет окон, всё равно создаём строку (окно = весь день)
                     rows.append([
@@ -1443,9 +1447,9 @@ class BreakManager:
             order_val = slot.get('order', 1)
             order = int(order_val) if isinstance(order_val, (int, str)) and str(order_val).isdigit() else 1
             
-            # Лимиты - ВАЖНО: используем максимальную длительность среди всех слотов одного типа
-            # Это гарантирует, что если пользователь изменил длительность одного из слотов,
-            # она будет правильно сохранена
+            # Лимиты - ВАЖНО: для каждого типа перерыва используем максимальную длительность
+            # среди всех слотов этого типа, так как лимит применяется ко всем перерывам одного типа
+            # Но каждый слот сохраняется отдельно с его собственной длительностью в окнах
             if slot_type not in limits_dict:
                 limits_dict[slot_type] = {
                     'break_type': slot_type,
@@ -1454,18 +1458,20 @@ class BreakManager:
                 }
             else:
                 # Обновляем time_minutes если текущий слот имеет большую длительность
-                # Или если это первый слот с установленной длительностью
+                # Лимит времени применяется ко всем перерывам одного типа
                 if duration > limits_dict[slot_type]['time_minutes']:
                     limits_dict[slot_type]['time_minutes'] = duration
             
             limits_dict[slot_type]['daily_count'] += 1
             
-            # Окна - создаем для каждого слота отдельно
+            # Окна - создаем для каждого слота отдельно с его собственной длительностью
+            # ВАЖНО: duration здесь используется для создания отдельного окна с правильной длительностью
             windows_list.append({
                 'break_type': slot_type,
                 'start': window_start,
                 'end': window_end,
-                'priority': order
+                'priority': order,
+                'duration': duration  # Сохраняем длительность каждого слота отдельно
             })
             
             logger.debug(f"Processed slot: type={slot_type}, duration={duration}, window={window_start}-{window_end}, order={order}")

@@ -493,7 +493,7 @@ class SupabaseAPI:
                     import json
                     slot_info = {
                         'slot_type': slot_type,
-                        'duration': duration,
+                        'duration': duration,  # ВАЖНО: сохраняем длительность каждого слота отдельно
                         'window_start': window_start,
                         'window_end': window_end,
                         'priority': priority
@@ -506,6 +506,8 @@ class SupabaseAPI:
                         'description': json.dumps(slot_info),  # Храним данные слота в JSON
                         'is_active': True
                     }
+                    
+                    logger.debug(f"Creating slot row: type={slot_type}, duration={duration}, window={window_start}-{window_end}")
                     
                     try:
                         self.client.table('break_schedules').insert(slot_data).execute()
