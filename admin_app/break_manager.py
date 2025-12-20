@@ -497,10 +497,11 @@ class BreakManager:
                     schedules[name]["slots_data"].append({
                         "order": str(order),
                         "type": slot_type,
-                        "duration": str(duration),
+                        "duration": str(duration),  # ВАЖНО: сохраняем duration из каждого слота
                         "window_start": window_start or "09:00",
                         "window_end": window_end or "17:00"
                     })
+                    logger.debug(f"Added slot to schedule '{name}': type={slot_type}, duration={duration}, window={window_start}-{window_end}")
             
             return list(schedules.values())
             
@@ -1442,22 +1443,32 @@ class BreakManager:
             order_val = slot.get('order', 1)
             order = int(order_val) if isinstance(order_val, (int, str)) and str(order_val).isdigit() else 1
             
-            # Лимиты
+            # Лимиты - ВАЖНО: используем максимальную длительность среди всех слотов одного типа
+            # Это гарантирует, что если пользователь изменил длительность одного из слотов,
+            # она будет правильно сохранена
             if slot_type not in limits_dict:
                 limits_dict[slot_type] = {
                     'break_type': slot_type,
                     'daily_count': 0,
-                    'time_minutes': duration
+                    'time_minutes': duration  # Начальное значение
                 }
+            else:
+                # Обновляем time_minutes если текущий слот имеет большую длительность
+                # Или если это первый слот с установленной длительностью
+                if duration > limits_dict[slot_type]['time_minutes']:
+                    limits_dict[slot_type]['time_minutes'] = duration
+            
             limits_dict[slot_type]['daily_count'] += 1
             
-            # Окна
+            # Окна - создаем для каждого слота отдельно
             windows_list.append({
                 'break_type': slot_type,
                 'start': window_start,
                 'end': window_end,
                 'priority': order
             })
+            
+            logger.debug(f"Processed slot: type={slot_type}, duration={duration}, window={window_start}-{window_end}, order={order}")
         
         limits = list(limits_dict.values())
         
@@ -1525,13 +1536,38 @@ class BreakManager:
                         logger.warning(f"No update data provided for schedule '{name}'")
                     
                     # Удаляем старые слоты (записи с description)
-                    delete_result = self.sheets.client.table('break_schedules')\
-                        .delete()\
-                        .eq('name', name)\
-                        .not_.is_('description', 'null')\
-                        .execute()
-                    
-                    logger.info(f"Deleted old slots for schedule '{name}' (count: {len(delete_result.data) if delete_result.data else 0})")
+                    # ВАЖНО: удаляем все слоты перед пересозданием, чтобы гарантировать актуальность данных
+                    try:
+                        delete_result = self.sheets.client.table('break_schedules')\
+                            .delete()\
+                            .eq('name', name)\
+                            .not_.is_('description', 'null')\
+                            .execute()
+                        
+                        deleted_count = len(delete_result.data) if delete_result.data else 0
+                        logger.info(f"Deleted old slots for schedule '{name}' (count: {deleted_count})")
+                        
+                        # Проверяем, что все слоты удалены
+                        remaining_check = self.sheets.client.table('break_schedules')\
+                            .select('id')\
+                            .eq('name', name)\
+                            .not_.is_('description', 'null')\
+                            .execute()
+                        
+                        if remaining_check.data:
+                            logger.warning(f"⚠️ Some slots were not deleted for schedule '{name}': {len(remaining_check.data)} remaining")
+                            # Пытаемся удалить оставшиеся по ID
+                            for record in remaining_check.data:
+                                try:
+                                    self.sheets.client.table('break_schedules')\
+                                        .delete()\
+                                        .eq('id', record['id'])\
+                                        .execute()
+                                except Exception as e:
+                                    logger.error(f"Failed to delete remaining slot {record['id']}: {e}")
+                    except Exception as delete_error:
+                        logger.error(f"Failed to delete old slots: {delete_error}", exc_info=True)
+                        # Продолжаем - слоты будут пересозданы
                 else:
                     logger.warning(f"Main record not found for schedule '{name}', will create new")
             except Exception as e:
