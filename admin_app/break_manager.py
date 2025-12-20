@@ -245,18 +245,49 @@ class BreakManager:
                         main_record = schedule_response.data[0]
                         logger.info(f"Created main schedule record: {main_record['id']} for name '{name}'")
                 else:
-                    # Обновляем shift_start и shift_end основной записи, если они изменились
+                    # Обновляем shift_start и shift_end основной записи всегда
+                    # Нормализуем время для сравнения (убираем секунды если есть)
+                    def normalize_time(t):
+                        if not t:
+                            return None
+                        t_str = str(t).strip()
+                        # Убираем секунды если есть (09:00:00 -> 09:00)
+                        if ':' in t_str and t_str.count(':') == 2:
+                            t_str = ':'.join(t_str.split(':')[:2])
+                        return t_str
+                    
+                    current_start = normalize_time(main_record.get('shift_start'))
+                    current_end = normalize_time(main_record.get('shift_end'))
+                    new_start = normalize_time(shift_start)
+                    new_end = normalize_time(shift_end)
+                    
                     update_data = {}
-                    if shift_start and main_record.get('shift_start') != shift_start:
+                    # Обновляем если значения отличаются или если они не установлены
+                    if new_start and current_start != new_start:
                         update_data['shift_start'] = shift_start
-                    if shift_end and main_record.get('shift_end') != shift_end:
+                    elif not current_start and new_start:
+                        update_data['shift_start'] = shift_start
+                    
+                    if new_end and current_end != new_end:
                         update_data['shift_end'] = shift_end
+                    elif not current_end and new_end:
+                        update_data['shift_end'] = shift_end
+                    
+                    # Всегда обновляем, даже если значения не изменились (для гарантии)
+                    if shift_start or shift_end:
+                        if 'shift_start' not in update_data and shift_start:
+                            update_data['shift_start'] = shift_start
+                        if 'shift_end' not in update_data and shift_end:
+                            update_data['shift_end'] = shift_end
+                    
                     if update_data:
                         self.sheets.client.table('break_schedules')\
                             .update(update_data)\
                             .eq('id', main_record['id'])\
                             .execute()
-                        logger.debug(f"Updated main schedule record: {update_data}")
+                        logger.info(f"Updated main schedule record shift times: {update_data}")
+                    else:
+                        logger.debug(f"No update needed for shift times (already correct)")
             
             # Формируем строки для записи
             rows = []
@@ -1422,25 +1453,63 @@ class BreakManager:
         """
         Обновляет шаблон графика (обратная совместимость)
         
-        Фактически удаляет старый и создаёт новый
+        Для Supabase: обновляет основную запись напрямую, затем пересоздаёт слоты
+        Для Google Sheets: удаляет старый и создаёт новый
         """
-        # Для Supabase удаляем по name, так как шаблоны группируются по name
         # Проверяем, является ли это Supabase API
         if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
-            # Удаляем по name (в Supabase шаблоны группируются по name)
-            result = self.sheets._delete_rows_by_schedule_id("break_schedules", name)
+            # Для Supabase: обновляем основную запись напрямую
+            try:
+                # Находим основную запись по name
+                existing = self.sheets.client.table('break_schedules')\
+                    .select('id, name, shift_start, shift_end')\
+                    .eq('name', name)\
+                    .is_('description', 'null')\
+                    .execute()
+                
+                if existing.data:
+                    main_record = existing.data[0]
+                    # Обновляем shift_start и shift_end напрямую
+                    update_data = {}
+                    if shift_start:
+                        update_data['shift_start'] = shift_start
+                    if shift_end:
+                        update_data['shift_end'] = shift_end
+                    
+                    if update_data:
+                        self.sheets.client.table('break_schedules')\
+                            .update(update_data)\
+                            .eq('id', main_record['id'])\
+                            .execute()
+                        logger.info(f"Updated shift times for schedule '{name}': {update_data}")
+                    
+                    # Удаляем старые слоты (записи с description)
+                    self.sheets.client.table('break_schedules')\
+                        .delete()\
+                        .eq('name', name)\
+                        .not_.is_('description', 'null')\
+                        .execute()
+                    
+                    logger.info(f"Deleted old slots for schedule '{name}'")
+                else:
+                    logger.warning(f"Main record not found for schedule '{name}', will create new")
+            except Exception as e:
+                logger.error(f"Failed to update schedule directly: {e}", exc_info=True)
+                # Fallback: удаляем и создаём заново
+                result = self.sheets._delete_rows_by_schedule_id("break_schedules", name)
+                if not result:
+                    logger.warning(f"Failed to delete old schedule {name}, continuing anyway...")
         else:
             # Для Google Sheets удаляем по schedule_id
             result = self.delete_schedule(schedule_id)
-        
-        if not result:
-            logger.warning(f"Failed to delete old schedule {name}, continuing anyway...")
+            if not result:
+                logger.warning(f"Failed to delete old schedule {schedule_id}, continuing anyway...")
         
         # Сбрасываем кэш
         self._cache.pop(schedule_id, None)
         self._cache.pop(name, None)
         
-        # Создаём новый
+        # Создаём новый (или пересоздаём слоты для Supabase)
         return self.create_schedule_template(
             schedule_id=schedule_id,
             name=name,
