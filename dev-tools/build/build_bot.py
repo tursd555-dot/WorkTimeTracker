@@ -84,8 +84,12 @@ def main():
             'PyQt5.QtGui',
             'telegram_bot',
             'telegram_bot.main',
+            'telegram_bot.monitor_bot',
+            'telegram_bot.notifier',
             'subprocess',
             'threading',
+            'supabase_api',
+            'shared.time_utils',
         ]
         
         for imp in hidden_imports:

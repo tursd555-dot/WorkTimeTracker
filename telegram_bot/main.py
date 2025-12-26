@@ -14,6 +14,9 @@ if str(ROOT_DIR) not in sys.path:
 # На всякий случай делаем рабочей директорией корень проекта
 os.chdir(ROOT_DIR)
 
+# Проверяем аргумент командной строки для выбора режима работы
+MODE = os.getenv("BOT_MODE", "linker")  # linker или monitor
+
 # === Основные импорты ===
 import logging, re, time, requests
 from typing import Optional
@@ -146,4 +149,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Если режим monitor, запускаем monitor_bot
+    if MODE == "monitor" or "--monitor" in sys.argv:
+        from telegram_bot.monitor_bot import main as monitor_main
+        monitor_main()
+    else:
+        # По умолчанию - linker bot
+        main()

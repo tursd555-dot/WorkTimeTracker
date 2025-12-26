@@ -57,9 +57,11 @@ class LogReaderThread(QThread):
 
 
 class BotLauncher(QWidget):
-    def __init__(self):
+    def __init__(self, mode="linker"):
         super().__init__()
-        self.setWindowTitle("WorkTimeTracker Bot — Monitor")
+        self.mode = mode  # "linker" или "monitor"
+        mode_name = "Linker Bot" if mode == "linker" else "Monitor Bot (24/7)"
+        self.setWindowTitle(f"WorkTimeTracker Bot — {mode_name}")
         self.resize(750, 450)
         self.process = None
         self.reader_thread = None
@@ -121,10 +123,11 @@ class BotLauncher(QWidget):
             self._append_log("⚠️ Бот уже запущен.")
             return
         try:
+            mode_text = "Linker Bot" if self.mode == "linker" else "Monitor Bot (24/7)"
             if auto:
-                self._append_log("🚀 Автозапуск Telegram-бота...")
+                self._append_log(f"🚀 Автозапуск {mode_text}...")
             else:
-                self._append_log("🔄 Перезапуск Telegram-бота...")
+                self._append_log(f"🔄 Перезапуск {mode_text}...")
 
             self.status_label.setText("🟡 Запуск бота...")
             self.status_label.setStyleSheet("color: orange; font-weight: bold; font-size: 16px;")
@@ -139,14 +142,24 @@ class BotLauncher(QWidget):
                 # если запущен из исходников — используем текущий интерпретатор
                 py_exec = sys.executable
 
+            # Формируем команду запуска
+            cmd = [py_exec, str(bot_script)]
+            if self.mode == "monitor":
+                cmd.append("--monitor")
+            
+            # Важно: устанавливаем переменную окружения для режима
+            env = os.environ.copy()
+            env["BOT_MODE"] = self.mode
+
             # важно: cwd = корень проекта, чтобы импортировался config.py
             self.process = subprocess.Popen(
-                [py_exec, str(bot_script)],
+                cmd,
                 cwd=str(Path(__file__).parent),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                bufsize=1
+                bufsize=1,
+                env=env
             )
 
             self.reader_thread = LogReaderThread(self.process)
@@ -195,7 +208,15 @@ class BotLauncher(QWidget):
 
 
 if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='WorkTimeTracker Bot Launcher')
+    parser.add_argument('--monitor', action='store_true', help='Запустить Monitor Bot (24/7) вместо Linker Bot')
+    args = parser.parse_args()
+    
+    mode = "monitor" if args.monitor else "linker"
+    
     app = QApplication(sys.argv)
-    win = BotLauncher()
+    win = BotLauncher(mode=mode)
     win.show()
     sys.exit(app.exec_())
