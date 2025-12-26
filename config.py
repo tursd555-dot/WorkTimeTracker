@@ -135,8 +135,26 @@ def credentials_path() -> Generator[Path, None, None]:
       1) ZIP рядом с EXE + CREDENTIALS_ZIP_PASSWORD
       2) GOOGLE_CREDENTIALS_FILE из .env (может быть относительным путём)
     Используйте: with credentials_path() as p: ...
+    
+    При использовании Supabase возвращает временный файл-заглушку.
     """
     global _CRED_MEMORY
+    
+    # Если используется Supabase, возвращаем заглушку
+    if USE_SUPABASE:
+        # Создаем временный пустой JSON файл для совместимости
+        import tempfile
+        import json
+        tmp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+        json.dump({}, tmp_file)
+        tmp_file.close()
+        tmp_path = Path(tmp_file.name)
+        try:
+            yield tmp_path
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        return
+    
     if USE_ZIP:
         zip_path = CREDENTIALS_ZIP
         if not zip_path.exists():
