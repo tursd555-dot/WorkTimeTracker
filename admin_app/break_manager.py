@@ -1013,26 +1013,56 @@ class BreakManager:
     def _count_breaks_today(self, email: str, break_type: str) -> int:
         """Подсчитывает количество перерывов сегодня"""
         try:
-            ws = self.sheets.get_worksheet(self.USAGE_LOG_SHEET)
-            rows = self.sheets._read_table(ws)
-            
-            today = date.today().isoformat()
-            
-            count = 0
-            for row in rows:
-                row_email = row.get("Email") or row.get("email") or ""
-                row_break_type = row.get("BreakType") or row.get("break_type") or ""
-                start_time_str = row.get("StartTime") or row.get("start_time") or ""
+            # Проверяем, используем ли мы Supabase
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Используем Supabase напрямую
+                today = date.today().isoformat()
                 
-                if (row_email.lower() == email.lower() and
-                    row_break_type == break_type and
-                    start_time_str.startswith(today)):
-                    count += 1
-            
-            return count
+                # Получаем перерывы за сегодня для данного пользователя и типа
+                result = self.sheets.client.table('break_log').select('id,email,break_type,start_time').eq(
+                    'email', email.lower()
+                ).eq('break_type', break_type).gte(
+                    'start_time', f"{today}T00:00:00"
+                ).lt(
+                    'start_time', f"{today}T23:59:59"
+                ).execute()
+                
+                breaks_data = result.data if hasattr(result, 'data') else []
+                count = len(breaks_data)
+                
+                logger.debug(
+                    f"Counted breaks for {email} ({break_type}): {count} "
+                    f"(from Supabase break_log, date={today})"
+                )
+                
+                return count
+            else:
+                # Используем Google Sheets через совместимый интерфейс
+                ws = self.sheets.get_worksheet(self.USAGE_LOG_SHEET)
+                rows = self.sheets._read_table(ws)
+                
+                today = date.today().isoformat()
+                
+                count = 0
+                for row in rows:
+                    row_email = row.get("Email") or row.get("email") or ""
+                    row_break_type = row.get("BreakType") or row.get("break_type") or ""
+                    start_time_str = row.get("StartTime") or row.get("start_time") or ""
+                    
+                    if (row_email.lower() == email.lower() and
+                        row_break_type == break_type and
+                        start_time_str.startswith(today)):
+                        count += 1
+                
+                logger.debug(
+                    f"Counted breaks for {email} ({break_type}): {count} "
+                    f"(from Google Sheets {self.USAGE_LOG_SHEET}, date={today})"
+                )
+                
+                return count
             
         except Exception as e:
-            logger.error(f"Failed to count breaks: {e}")
+            logger.error(f"Failed to count breaks for {email} ({break_type}): {e}", exc_info=True)
             return 0
     
     def _get_active_break(self, email: str, break_type: str) -> Optional[Dict]:
