@@ -93,10 +93,18 @@ def main():
         
         # Добавляем данные
         data_files = [
-            ('secret_creds.zip', '.'),
             ('config.py', '.'),
+        ]
+        
+        # Опциональные файлы
+        optional_data_files = [
+            ('secret_creds.zip', '.'),
             ('auto_sync.py', '.'),
             ('sheets_api.py', '.'),
+        ]
+        
+        # Обязательные директории
+        data_dirs = [
             ('user_app', 'user_app'),
             ('sync', 'sync'),
         ]
@@ -106,7 +114,19 @@ def main():
             if src_path.exists():
                 options.extend(['--add-data', f'{src_path};{dst}'])
             else:
-                logger.warning(f"⚠ Файл/папка не найдена: {src_path}")
+                logger.warning(f"⚠ Файл не найден: {src_path}")
+        
+        for src, dst in optional_data_files:
+            src_path = project_root / src
+            if src_path.exists():
+                options.extend(['--add-data', f'{src_path};{dst}'])
+        
+        for src, dst in data_dirs:
+            src_path = project_root / src
+            if src_path.exists():
+                options.extend(['--add-data', f'{src_path};{dst}'])
+            else:
+                logger.warning(f"⚠ Директория не найдена: {src_path}")
         
         # Скрытые импорты
         hidden_imports = [
