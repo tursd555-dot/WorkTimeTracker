@@ -15,7 +15,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 # Инициализация логирования через единый модуль
-from config import LOG_DIR, get_credentials_file, DB_MAIN_PATH, DB_FALLBACK_PATH
+from config import LOG_DIR, DB_MAIN_PATH, DB_FALLBACK_PATH, USE_SUPABASE
 from logging_setup import setup_logging
 from user_app.signals import SyncSignals
 from api_adapter import get_sheets_api  # ← изменено: используем функцию вместо прямого импорта
@@ -95,11 +95,14 @@ class ApplicationManager(QObject):
 
     # --- Инициализация ресурсов ---
     def _initialize_resources(self):
-        creds_path = get_credentials_file()
-        if not creds_path.exists():
-            raise FileNotFoundError(f"Credentials file not found: {creds_path}")
+        # Проверяем credentials только если не используется Supabase
+        if not USE_SUPABASE:
+            from config import get_credentials_file
+            creds_path = get_credentials_file()
+            if not creds_path.exists():
+                raise FileNotFoundError(f"Credentials file not found: {creds_path}")
         
-        # Инициализация клиента Google Sheets
+        # Инициализация клиента Google Sheets / Supabase
         try:
             # ← изменено: используем функцию get_sheets_api() вместо прямого создания экземпляра
             api = get_sheets_api()
