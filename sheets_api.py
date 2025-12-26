@@ -91,19 +91,30 @@ class SheetsAPI:
             logger.debug(f"sys.path ok, len={len(sys.path)}")
 
             # Получаем путь к credentials через контекстный менеджер
-            with credentials_path() as creds_path:
-                self.credentials_path = Path(creds_path).resolve()
-                logger.info(f"Initializing with credentials: {self.credentials_path}")
-                logger.debug(f"Credentials exists: {os.path.exists(self.credentials_path)}")
-                if not self.credentials_path.exists():
-                    if getattr(sys, 'frozen', False):
-                        logger.error("Running in frozen mode but credentials not found!")
-                    raise FileNotFoundError(f"Credentials file missing at: {self.credentials_path}")
-                # Обязателен ID книги из .env
-                self._sheet_id = (os.getenv("GOOGLE_SHEET_ID") or "").strip()
-                if not self._sheet_id:
-                    raise RuntimeError("GOOGLE_SHEET_ID не задан в .env")
-                self._init_client()
+            # Проверяем, используется ли Supabase
+            from config import USE_SUPABASE
+            if USE_SUPABASE:
+                # При использовании Supabase credentials не нужны
+                self.credentials_path = None
+                logger.info("Using Supabase - credentials not required")
+            else:
+                with credentials_path() as creds_path:
+                    self.credentials_path = Path(creds_path).resolve()
+                    logger.info(f"Initializing with credentials: {self.credentials_path}")
+                    logger.debug(f"Credentials exists: {os.path.exists(self.credentials_path)}")
+                    if not self.credentials_path.exists():
+                        if getattr(sys, 'frozen', False):
+                            logger.error("Running in frozen mode but credentials not found!")
+                        raise FileNotFoundError(f"Credentials file missing at: {self.credentials_path}")
+                    # Обязателен ID книги из .env
+                    self._sheet_id = (os.getenv("GOOGLE_SHEET_ID") or "").strip()
+                    if not self._sheet_id:
+                        raise RuntimeError("GOOGLE_SHEET_ID не задан в .env")
+                    self._init_client()
+            else:
+                # При использовании Supabase credentials не нужны
+                self.credentials_path = None
+                logger.info("Using Supabase - credentials not required, skipping Sheets API initialization")
         except Exception as e:
             logger.critical("Initialization failed", exc_info=True)
             raise SheetsAPIError(
