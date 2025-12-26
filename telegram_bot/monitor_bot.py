@@ -172,22 +172,39 @@ class MonitorBot:
             
             # Получаем активные перерывы (без end_time или с недавним start_time)
             # Используем более широкий запрос - получаем все перерывы за последние 2 часа
-            breaks = self.supabase.client.table('break_log').select('*').gte(
-                'start_time', recent_time.isoformat()
-            ).execute()
+            # Сначала пробуем получить только активные (без end_time)
+            try:
+                breaks = self.supabase.client.table('break_log').select('*').gte(
+                    'start_time', recent_time.isoformat()
+                ).is_('end_time', 'null').execute()
+                breaks_data = breaks.data if hasattr(breaks, 'data') else []
+                logger.debug(f"Found {len(breaks_data)} active breaks (end_time is null)")
+            except Exception as e:
+                # Если запрос с is_('end_time', 'null') не работает, получаем все и фильтруем
+                logger.warning(f"Query with is_('end_time', 'null') failed: {e}, trying alternative")
+                breaks = self.supabase.client.table('break_log').select('*').gte(
+                    'start_time', recent_time.isoformat()
+                ).execute()
+                breaks_data = breaks.data if hasattr(breaks, 'data') else []
+                
+                # Фильтруем только активные (без end_time)
+                active_breaks = []
+                for break_entry in breaks_data:
+                    end_time = break_entry.get('end_time')
+                    # Проверяем разные варианты: None, пустая строка, null
+                    if end_time is None or (isinstance(end_time, str) and end_time.strip() == ''):
+                        active_breaks.append(break_entry)
+                
+                breaks_data = active_breaks
+                logger.debug(f"Found {len(breaks_data)} active breaks after filtering (from {len(breaks.data if hasattr(breaks, 'data') else [])} total)")
             
-            breaks_data = breaks.data if hasattr(breaks, 'data') else []
-            
-            # Фильтруем только активные (без end_time)
-            active_breaks = []
+            # Дополнительная проверка: логируем каждый активный перерыв
             for break_entry in breaks_data:
+                email = break_entry.get('email', '')
+                break_id = break_entry.get('id', 'N/A')
+                start_time_str = break_entry.get('start_time', '')
                 end_time = break_entry.get('end_time')
-                if not end_time or (isinstance(end_time, str) and end_time.strip() == ''):
-                    active_breaks.append(break_entry)
-            
-            logger.debug(f"Found {len(breaks_data)} breaks total, {len(active_breaks)} active (no end_time)")
-            
-            breaks_data = active_breaks
+                logger.debug(f"Active break: email={email}, id={break_id}, start={start_time_str}, end_time={end_time}")
             
             warnings_sent = 0
             for break_entry in breaks_data:
