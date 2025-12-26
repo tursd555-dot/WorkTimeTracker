@@ -33,7 +33,7 @@ from config import (
 )
 from telegram_bot.notifier import TelegramNotifier
 from supabase_api import get_supabase_api
-from shared.time_utils import format_datetime_moscow, format_time_moscow
+from shared.time_utils import format_datetime_moscow, format_time_moscow, now_moscow
 
 # Настройка логирования
 from logging_setup import setup_logging
@@ -85,8 +85,8 @@ class MonitorBot:
     def check_violations(self):
         """Проверяет новые нарушения в Supabase"""
         try:
-            # Получаем нарушения за последний час
-            now = datetime.now()
+            # Получаем нарушения за последний час (используем московское время)
+            now = now_moscow()
             hour_ago = now - timedelta(hours=1)
             date_from = hour_ago.isoformat()
             date_to = now.isoformat()
@@ -165,7 +165,7 @@ class MonitorBot:
         try:
             # Получаем активные перерывы из break_log
             # Ищем перерывы, которые начались недавно и еще не закончились
-            now = datetime.now()
+            now = now_moscow()
             recent_time = now - timedelta(hours=2)
             
             # Получаем активные перерывы (без end_time или с недавним start_time)
@@ -191,8 +191,18 @@ class MonitorBot:
                     else:
                         start_time = datetime.strptime(start_time_str[:19], '%Y-%m-%d %H:%M:%S')
                     
-                    # Вычисляем длительность
-                    duration = (now - start_time.replace(tzinfo=None)).total_seconds() / 60  # в минутах
+                    # Вычисляем длительность (конвертируем start_time в московское время для правильного расчета)
+                    if start_time.tzinfo is None:
+                        # Если время без timezone, считаем что это UTC и конвертируем в московское
+                        from shared.time_utils import to_moscow
+                        start_time_moscow = to_moscow(start_time)
+                    else:
+                        # Если есть timezone, конвертируем в московское
+                        from shared.time_utils import to_moscow
+                        start_time_moscow = to_moscow(start_time)
+                    
+                    # Вычисляем длительность в московском времени
+                    duration = (now - start_time_moscow).total_seconds() / 60  # в минутах
                     
                     # Лимиты (из config.py)
                     limit_minutes = 15 if break_type == 'Перерыв' else 60  # Перерыв: 15 мин, Обед: 60 мин
@@ -230,7 +240,7 @@ class MonitorBot:
     def _send_break_warning(self, email: str, break_type: str, duration: float, limit: int, overtime: int):
         """Отправляет предупреждение о превышении лимита перерыва"""
         try:
-            current_time = format_time_moscow(datetime.now(), '%H:%M:%S')
+            current_time = format_time_moscow(now_moscow(), '%H:%M:%S')
             
             message = (
                 f"⏰ ПРЕВЫШЕНИЕ ЛИМИТА ПЕРЕРЫВА\n\n"
@@ -256,8 +266,8 @@ class MonitorBot:
         logger.info(f"   Violations check: {VIOLATIONS_CHECK_INTERVAL}s")
         logger.info(f"   Breaks check: {BREAKS_CHECK_INTERVAL}s")
         
-        last_violations_check = datetime.now()
-        last_breaks_check = datetime.now()
+        last_violations_check = now_moscow()
+        last_breaks_check = now_moscow()
         
         # Отправляем стартовое сообщение
         try:
@@ -271,7 +281,7 @@ class MonitorBot:
         
         try:
             while True:
-                now = datetime.now()
+                now = now_moscow()
                 
                 # Проверяем нарушения
                 if (now - last_violations_check).total_seconds() >= VIOLATIONS_CHECK_INTERVAL:
