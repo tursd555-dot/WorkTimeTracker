@@ -60,8 +60,17 @@ def main():
         
         # Добавляем данные
         data_files = [
-            ('secret_creds.zip', '.'),
             ('config.py', '.'),
+        ]
+        
+        # Опциональные файлы
+        optional_data_files = [
+            ('secret_creds.zip', '.'),
+        ]
+        
+        # Обязательные директории
+        data_dirs = [
+            ('telegram_bot', 'telegram_bot'),
         ]
         
         for src, dst in data_files:
@@ -70,6 +79,18 @@ def main():
                 options.extend(['--add-data', f'{src_path};{dst}'])
             else:
                 logger.warning(f"⚠ Файл не найден: {src_path}")
+        
+        for src, dst in optional_data_files:
+            src_path = project_root / src
+            if src_path.exists():
+                options.extend(['--add-data', f'{src_path};{dst}'])
+        
+        for src, dst in data_dirs:
+            src_path = project_root / src
+            if src_path.exists():
+                options.extend(['--add-data', f'{src_path};{dst}'])
+            else:
+                logger.warning(f"⚠ Директория не найдена: {src_path}")
         
         # Добавляем .env, если существует
         env_file = project_root / '.env'
