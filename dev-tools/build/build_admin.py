@@ -98,6 +98,13 @@ def main():
             'openpyxl.utils',
             'openpyxl.workbook',
             'openpyxl.worksheet',
+            # Для работы с Supabase
+            'supabase',
+            'supabase.client',
+            'postgrest',
+            'realtime',
+            'storage',
+            'gotrue',
         ]
         
         for imp in hidden_imports:
