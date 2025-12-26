@@ -1731,21 +1731,25 @@ class ReportsTab(QWidget):
                 return
             
             if not EXCEL_AVAILABLE:
-                QMessageBox.warning(
-                    self, "Ошибка", 
-                    "Модуль openpyxl не установлен.\n"
-                    "Установите: pip install openpyxl --break-system-packages"
+                error_msg = (
+                    "Модуль openpyxl не найден в собранном приложении.\n\n"
+                    "Это ошибка сборки. Модуль должен быть включен в PyInstaller.\n\n"
+                    "Сообщите разработчику о проблеме."
                 )
+                logger.error("openpyxl not available (EXCEL_AVAILABLE=False)")
+                QMessageBox.critical(self, "Ошибка импорта", error_msg)
                 return
             
             try:
                 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-            except ImportError:
-                QMessageBox.warning(
-                    self, "Ошибка", 
-                    "Модуль openpyxl не установлен.\n"
-                    "Установите: pip install openpyxl --break-system-packages"
+            except ImportError as import_err:
+                error_msg = (
+                    f"Не удалось импортировать openpyxl.styles.\n\n"
+                    f"Ошибка: {import_err}\n\n"
+                    "Это ошибка сборки. Модуль должен быть включен в PyInstaller."
                 )
+                logger.error(f"Failed to import openpyxl.styles: {import_err}", exc_info=True)
+                QMessageBox.critical(self, "Ошибка импорта", error_msg)
                 return
             
             wb = openpyxl.Workbook()

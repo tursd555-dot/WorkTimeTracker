@@ -50,6 +50,8 @@ def main():
             '--noconfirm',
             '--log-level=WARN',
             '--paths=.',
+            # Собираем все зависимости openpyxl
+            '--collect-all', 'openpyxl',
         ]
         
         # Добавляем иконку, если существует
@@ -95,9 +97,19 @@ def main():
             # Для экспорта в Excel
             'openpyxl',
             'openpyxl.styles',
+            'openpyxl.styles.fonts',
+            'openpyxl.styles.fills',
+            'openpyxl.styles.alignment',
+            'openpyxl.styles.borders',
             'openpyxl.utils',
+            'openpyxl.utils.datetime',
+            'openpyxl.utils.excel',
             'openpyxl.workbook',
             'openpyxl.worksheet',
+            'openpyxl.cell',
+            'openpyxl.cell.cell',
+            'openpyxl.cell.text',
+            'et_xmlfile',
             # Для работы с Supabase
             'supabase',
             'supabase.client',
