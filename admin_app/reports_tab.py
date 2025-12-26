@@ -38,9 +38,16 @@ from shared.time_utils import format_datetime_moscow, now_moscow
 try:
     import openpyxl
     from openpyxl.utils import get_column_letter
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
     EXCEL_AVAILABLE = True
 except ImportError:
     EXCEL_AVAILABLE = False
+    # Заглушки для случаев, когда openpyxl недоступен
+    Font = None
+    PatternFill = None
+    Alignment = None
+    Border = None
+    Side = None
 
 logger = logging.getLogger(__name__)
 
@@ -1740,15 +1747,13 @@ class ReportsTab(QWidget):
                 QMessageBox.critical(self, "Ошибка импорта", error_msg)
                 return
             
-            try:
-                from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-            except ImportError as import_err:
+            # Проверяем, что стили импортированы
+            if PatternFill is None or Font is None or Alignment is None:
                 error_msg = (
-                    f"Не удалось импортировать openpyxl.styles.\n\n"
-                    f"Ошибка: {import_err}\n\n"
+                    "Не удалось импортировать классы стилей openpyxl.\n\n"
                     "Это ошибка сборки. Модуль должен быть включен в PyInstaller."
                 )
-                logger.error(f"Failed to import openpyxl.styles: {import_err}", exc_info=True)
+                logger.error("openpyxl.styles classes not available")
                 QMessageBox.critical(self, "Ошибка импорта", error_msg)
                 return
             
@@ -1757,6 +1762,7 @@ class ReportsTab(QWidget):
             ws.title = tab_name[:31]  # Excel ограничение длины имени листа
             
             # Экспортируем данные в зависимости от текущей вкладки
+            # PatternFill, Font, Alignment уже импортированы на уровне модуля
             if current_tab == 0:  # По сотрудникам
                 self._export_employees_to_excel(ws)
             elif current_tab == 1:  # По группам
