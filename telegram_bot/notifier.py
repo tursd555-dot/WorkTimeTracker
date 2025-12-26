@@ -7,6 +7,21 @@ from typing import Dict, Optional, Tuple, List
 import requests
 import os
 
+# Импорт для работы с московским временем
+try:
+    from shared.time_utils import format_datetime_moscow, now_moscow
+except ImportError:
+    # Фолбэк если модуль недоступен
+    def format_datetime_moscow(dt, format_str='%Y-%m-%d %H:%M:%S'):
+        if dt is None:
+            dt = datetime.now()
+        if isinstance(dt, str):
+            dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
+        return dt.strftime(format_str)
+    
+    def now_moscow():
+        return datetime.now(timezone.utc).astimezone()
+
 # Импорты из config.py с обработкой исключений на случай отсутствия модуля
 try:
     from config import (
@@ -37,7 +52,8 @@ NOTIFICATIONS_LOG_SHEET = "NotificationsLog"
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+    """Возвращает текущее время в московском часовом поясе в ISO формате"""
+    return now_moscow().isoformat(timespec="seconds")
 
 
 def _bool(v, default=False):
