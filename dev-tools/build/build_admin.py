@@ -92,6 +92,12 @@ def main():
             'PyQt5.QtCore',
             'PyQt5.QtWidgets',
             'PyQt5.QtGui',
+            # Для экспорта в Excel
+            'openpyxl',
+            'openpyxl.styles',
+            'openpyxl.utils',
+            'openpyxl.workbook',
+            'openpyxl.worksheet',
         ]
         
         for imp in hidden_imports:

@@ -32,7 +32,7 @@ from pathlib import Path
 # Добавляем путь к shared модулям
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-from shared.time_utils import format_datetime_moscow
+from shared.time_utils import format_datetime_moscow, now_moscow
 
 # Для экспорта в Excel
 try:
@@ -1584,12 +1584,12 @@ class ReportsTab(QWidget):
                         if 'T' in login_time:
                             login_dt_utc = datetime.fromisoformat(login_time.replace('Z', '+00:00'))
                         else:
-                            login_dt_utc = datetime.strptime(login_time[:19], '%Y-%m-%d %H:%M:%S').replace(tzinfo=tz.utc)
+                            login_dt_utc = datetime.strptime(login_time[:19], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
                         
                         if 'T' in logout_time:
                             logout_dt_utc = datetime.fromisoformat(logout_time.replace('Z', '+00:00'))
                         else:
-                            logout_dt_utc = datetime.strptime(logout_time[:19], '%Y-%m-%d %H:%M:%S').replace(tzinfo=tz.utc)
+                            logout_dt_utc = datetime.strptime(logout_time[:19], '%Y-%m-%d %H:%M:%S').replace(tzinfo=timezone.utc)
                         
                         duration = (logout_dt_utc - login_dt_utc).total_seconds()
                         hours = int(duration // 3600)
@@ -1718,10 +1718,12 @@ class ReportsTab(QWidget):
             current_tab = self.reports_tabs.currentIndex()
             tab_name = self.reports_tabs.tabText(current_tab)
             
+            # Генерируем имя файла по умолчанию
+            default_filename = f"report_{now_moscow().strftime('%Y%m%d_%H%M%S')}.xlsx"
             filename, _ = QFileDialog.getSaveFileName(
                 self,
                 f"Экспорт отчета '{tab_name}'",
-                f"report_{format_datetime_moscow(datetime.now(), '%Y%m%d_%H%M%S')}.xlsx",
+                default_filename,
                 "Excel Files (*.xlsx)"
             )
             
@@ -1772,15 +1774,46 @@ class ReportsTab(QWidget):
                 return
             
             # Сохраняем файл
-            wb.save(filename)
-            QMessageBox.information(
-                self, "Успех", 
-                f"Отчет успешно экспортирован:\n{filename}"
-            )
+            try:
+                wb.save(filename)
+                QMessageBox.information(
+                    self, "Успех", 
+                    f"Отчет успешно экспортирован:\n{filename}"
+                )
+            except PermissionError:
+                error_msg = (
+                    f"Не удалось сохранить файл:\n{filename}\n\n"
+                    "Возможные причины:\n"
+                    "- Файл открыт в другой программе (Excel, и т.д.)\n"
+                    "- Нет прав на запись в выбранную папку\n"
+                    "- Файл защищен от записи"
+                )
+                logger.error(f"Permission denied when saving Excel file: {filename}")
+                QMessageBox.warning(self, "Ошибка сохранения", error_msg)
+            except Exception as save_error:
+                error_msg = (
+                    f"Ошибка при сохранении файла:\n{filename}\n\n"
+                    f"Детали: {save_error}"
+                )
+                logger.error(f"Failed to save Excel file: {save_error}", exc_info=True)
+                QMessageBox.warning(self, "Ошибка сохранения", error_msg)
             
+        except ImportError as import_error:
+            error_msg = (
+                "Модуль openpyxl не найден в собранном приложении.\n\n"
+                "Это ошибка сборки. Сообщите разработчику.\n\n"
+                f"Детали: {import_error}"
+            )
+            logger.error(f"openpyxl import failed: {import_error}", exc_info=True)
+            QMessageBox.critical(self, "Ошибка импорта", error_msg)
         except Exception as e:
+            error_msg = (
+                f"Не удалось экспортировать отчет в Excel.\n\n"
+                f"Ошибка: {e}\n\n"
+                "Проверьте логи для получения дополнительной информации."
+            )
             logger.error(f"Failed to export to Excel: {e}", exc_info=True)
-            QMessageBox.warning(self, "Ошибка", f"Не удалось экспортировать: {e}")
+            QMessageBox.warning(self, "Ошибка экспорта", error_msg)
     
     def _export_employees_to_excel(self, ws):
         """Экспортирует отчет по сотрудникам"""
