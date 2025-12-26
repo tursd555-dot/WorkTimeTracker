@@ -103,7 +103,6 @@ def main():
             'openpyxl.styles.borders',
             'openpyxl.utils',
             'openpyxl.utils.datetime',
-            'openpyxl.utils.excel',
             'openpyxl.workbook',
             'openpyxl.worksheet',
             'openpyxl.cell',
@@ -115,8 +114,6 @@ def main():
             'supabase.client',
             'postgrest',
             'realtime',
-            'storage',
-            'gotrue',
         ]
         
         for imp in hidden_imports:

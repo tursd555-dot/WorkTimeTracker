@@ -38,12 +38,12 @@ def main():
 
         # Проверка существования файлов
         required_files = [
-            'secret_creds.zip',
             'config.py',
-            'auto_sync.py',
-            'sheets_api.py',
-            'user_app',
-            'sync'
+        ]
+        
+        # Опциональные файлы (предупреждение, но не ошибка)
+        optional_files = [
+            'secret_creds.zip',
         ]
         
         missing_files = []
@@ -53,7 +53,25 @@ def main():
                 missing_files.append(file)
         
         if missing_files:
-            logger.critical(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Отсутствуют файлы: {', '.join(missing_files)}")
+            logger.critical(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Отсутствуют необходимые файлы: {', '.join(missing_files)}")
+            sys.exit(1)
+        
+        # Проверка опциональных файлов (только предупреждение)
+        for file in optional_files:
+            file_path = project_root / file
+            if not file_path.exists():
+                logger.warning(f"⚠ Опциональный файл не найден: {file} (будет пропущен при сборке)")
+        
+        # Проверка директорий
+        required_dirs = ['user_app', 'sync']
+        missing_dirs = []
+        for dir_name in required_dirs:
+            dir_path = project_root / dir_name
+            if not dir_path.is_dir():
+                missing_dirs.append(dir_name)
+        
+        if missing_dirs:
+            logger.critical(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Отсутствуют необходимые директории: {', '.join(missing_dirs)}")
             sys.exit(1)
 
         options = [
