@@ -30,11 +30,11 @@ def main():
         # Переходим в корень проекта
         os.chdir(str(project_root))
         
-        # Очистка
-        for dir_name in ['dist', 'build']:
-            if Path(dir_name).exists():
-                shutil.rmtree(dir_name)
-                logger.info(f"🧹 Очищена директория: {dir_name}")
+        # Очистка только build директории (dist очищается в build_all_windows.py)
+        build_dir = Path('build')
+        if build_dir.exists():
+            shutil.rmtree(build_dir)
+            logger.info(f"🧹 Очищена директория: {build_dir}")
 
         # Проверка существования файлов
         required_files = [
