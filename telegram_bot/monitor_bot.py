@@ -262,10 +262,18 @@ class MonitorBot:
                         # Но если это новый перерыв (новый break_id или новое start_time), отправляем сразу
                         time_since_last = (now - last_sent).total_seconds() if last_sent else None
                         
+                        # Логируем состояние дебаунсинга
+                        logger.debug(
+                            f"Break check: {email} ({break_type}), duration={duration:.1f}min, "
+                            f"limit={limit_minutes}min, key={key}, "
+                            f"last_sent={last_sent.isoformat() if last_sent else 'None'}, "
+                            f"time_since_last={time_since_last:.0f}s" if time_since_last else "first_check"
+                        )
+                        
                         if last_sent is None or time_since_last >= 300:  # 5 минут
                             overtime = int(duration - limit_minutes)
                             logger.info(
-                                f"Sending break warning: {email} ({break_type}), "
+                                f"✅ Sending break warning: {email} ({break_type}), "
                                 f"duration={duration:.1f}min, limit={limit_minutes}min, "
                                 f"overtime={overtime}min, key={key}, "
                                 f"time_since_last={time_since_last:.0f}s" if time_since_last else "first_warning"
@@ -274,10 +282,16 @@ class MonitorBot:
                             _sent_break_warnings[key] = now
                             warnings_sent += 1
                         else:
-                            logger.debug(
-                                f"Skipping break warning (debounce): {email} ({break_type}), "
-                                f"key={key}, time_since_last={time_since_last:.0f}s"
+                            logger.warning(
+                                f"⏸️ Skipping break warning (debounce): {email} ({break_type}), "
+                                f"key={key}, time_since_last={time_since_last:.0f}s, "
+                                f"duration={duration:.1f}min, limit={limit_minutes}min"
                             )
+                    else:
+                        logger.debug(
+                            f"Break OK: {email} ({break_type}), duration={duration:.1f}min, "
+                            f"limit={limit_minutes}min (no warning needed)"
+                        )
                 
                 except Exception as e:
                     logger.warning(f"Error processing break entry: {e}")
