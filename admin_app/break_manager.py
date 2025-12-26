@@ -771,7 +771,17 @@ class BreakManager:
             
             # 3. Проверить дневной лимит
             today_count = self._count_breaks_today(email, break_type)
-            quota_exceeded = today_count >= limit.daily_count
+            # today_count - это количество УЖЕ существующих перерывов до начала нового
+            # Новый перерыв будет (today_count + 1)-м
+            new_total_count = today_count + 1
+            quota_exceeded = new_total_count > limit.daily_count
+            
+            logger.info(
+                f"Quota check for {email} ({break_type}): "
+                f"existing={today_count}, new_total={new_total_count}, "
+                f"limit={limit.daily_count}, exceeded={quota_exceeded}"
+            )
+            
             if quota_exceeded:
                 # Превышение квоты - критическое нарушение
                 # НО разрешаем перерыв (не блокируем пользователя)
@@ -780,7 +790,7 @@ class BreakManager:
                     session_id=session_id,
                     violation_type=self.VIOLATION_QUOTA_EXCEEDED,
                     severity=self.SEVERITY_CRITICAL,
-                    details=f"Превышен дневной лимит {break_type}: {today_count+1}/{limit.daily_count}"
+                    details=f"Превышен дневной лимит {break_type}: {new_total_count}/{limit.daily_count}"
                 )
                 
                 # Отправить уведомление в группу (одно за нарушение)
@@ -789,7 +799,7 @@ class BreakManager:
                     send_quota_exceeded_notification(
                         email=email,
                         break_type=break_type,
-                        used_count=today_count + 1,
+                        used_count=new_total_count,  # Используем правильное количество
                         limit_count=limit.daily_count
                     )
                 except Exception as e:
@@ -1030,10 +1040,22 @@ class BreakManager:
                 breaks_data = result.data if hasattr(result, 'data') else []
                 count = len(breaks_data)
                 
-                logger.debug(
+                # Логируем детали для отладки
+                logger.info(
                     f"Counted breaks for {email} ({break_type}): {count} "
                     f"(from Supabase break_log, date={today})"
                 )
+                
+                # Детальное логирование первых нескольких перерывов
+                if breaks_data:
+                    logger.debug(f"Break entries found for {email} ({break_type}):")
+                    for i, entry in enumerate(breaks_data[:5], 1):
+                        logger.debug(
+                            f"  {i}. id={entry.get('id')}, "
+                            f"start_time={entry.get('start_time')}, "
+                            f"end_time={entry.get('end_time')}, "
+                            f"status={entry.get('status')}"
+                        )
                 
                 return count
             else:
