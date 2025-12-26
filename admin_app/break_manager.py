@@ -1021,40 +1021,56 @@ class BreakManager:
     # =================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ===================
     
     def _count_breaks_today(self, email: str, break_type: str) -> int:
-        """Подсчитывает количество перерывов сегодня"""
+        """Подсчитывает количество перерывов сегодня (в московском времени)"""
         try:
             # Проверяем, используем ли мы Supabase
             if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
                 # Используем Supabase напрямую
-                today = date.today().isoformat()
+                # Важно: используем московское время для определения "сегодня"
+                from shared.time_utils import now_moscow, to_moscow
+                from datetime import timezone, timedelta
                 
-                # Получаем перерывы за сегодня для данного пользователя и типа
-                result = self.sheets.client.table('break_log').select('id,email,break_type,start_time').eq(
-                    'email', email.lower()
-                ).eq('break_type', break_type).gte(
-                    'start_time', f"{today}T00:00:00"
-                ).lt(
-                    'start_time', f"{today}T23:59:59"
-                ).execute()
+                moscow_now = now_moscow()
+                today = moscow_now.date()
+                
+                # Получаем все перерывы за сегодня для данного пользователя и типа
+                # Сначала получаем все перерывы пользователя за последние 2 дня (на случай перехода через UTC)
+                result = self.sheets.client.table('break_log').select(
+                    'id,email,break_type,start_time,end_time'
+                ).eq('email', email.lower()).eq('break_type', break_type).execute()
                 
                 breaks_data = result.data if hasattr(result, 'data') else []
-                count = len(breaks_data)
+                
+                # Фильтруем перерывы по московской дате
+                count = 0
+                for entry in breaks_data:
+                    start_time_str = entry.get('start_time')
+                    if not start_time_str:
+                        continue
+                    
+                    # Конвертируем start_time в московское время
+                    start_time_moscow = to_moscow(start_time_str)
+                    if start_time_moscow and start_time_moscow.date() == today:
+                        count += 1
                 
                 # Логируем детали для отладки
                 logger.info(
                     f"Counted breaks for {email} ({break_type}): {count} "
-                    f"(from Supabase break_log, date={today})"
+                    f"(from Supabase break_log, date={today.isoformat()} Moscow time, "
+                    f"total entries checked: {len(breaks_data)})"
                 )
                 
                 # Детальное логирование первых нескольких перерывов
                 if breaks_data:
                     logger.debug(f"Break entries found for {email} ({break_type}):")
-                    for i, entry in enumerate(breaks_data[:5], 1):
+                    for i, entry in enumerate(breaks_data[:10], 1):
+                        start_time_str = entry.get('start_time')
+                        start_time_moscow = to_moscow(start_time_str) if start_time_str else None
                         logger.debug(
                             f"  {i}. id={entry.get('id')}, "
-                            f"start_time={entry.get('start_time')}, "
-                            f"end_time={entry.get('end_time')}, "
-                            f"status={entry.get('status')}"
+                            f"start_time={start_time_str}, "
+                            f"start_time_moscow={start_time_moscow}, "
+                            f"date_match={start_time_moscow.date() == today if start_time_moscow else False}"
                         )
                 
                 return count
