@@ -50,7 +50,7 @@ BREAKS_CHECK_INTERVAL = 30  # Проверка перерывов каждые 3
 
 # Отслеживание уже отправленных уведомлений
 _sent_violations: Set[str] = set()  # violation_id или ключ
-_sent_break_warnings: Dict[str, datetime] = {}  # email_break_type -> last_sent
+_sent_break_warnings: Dict[str, datetime] = {}  # break_id или email_break_type_start_time -> last_sent
 _last_check_time: Optional[datetime] = None
 
 
@@ -180,6 +180,7 @@ class MonitorBot:
                 email = break_entry.get('email', '')
                 break_type = break_entry.get('break_type', '')
                 start_time_str = break_entry.get('start_time', '')
+                break_id = break_entry.get('id')  # Уникальный ID перерыва из Supabase
                 
                 if not email or not start_time_str:
                     continue
@@ -209,15 +210,24 @@ class MonitorBot:
                     
                     # Проверяем превышение
                     if duration > limit_minutes:
-                        # Проверяем дебаунсинг (раз в 5 минут)
-                        key = f"{email}_{break_type}"
+                        # Используем уникальный ключ для каждого перерыва
+                        # Если есть break_id, используем его, иначе используем комбинацию email+break_type+start_time
+                        if break_id:
+                            key = f"break_{break_id}"
+                        else:
+                            # Используем start_time для уникальности
+                            key = f"{email}_{break_type}_{start_time_str[:19]}"
+                        
                         last_sent = _sent_break_warnings.get(key)
                         
+                        # Дебаунсинг: отправляем уведомление раз в 5 минут для каждого конкретного перерыва
+                        # Но если это новый перерыв (новый break_id или новое start_time), отправляем сразу
                         if last_sent is None or (now - last_sent).total_seconds() >= 300:  # 5 минут
                             overtime = int(duration - limit_minutes)
                             self._send_break_warning(email, break_type, duration, limit_minutes, overtime)
                             _sent_break_warnings[key] = now
                             warnings_sent += 1
+                            logger.debug(f"Sent break warning for {email} ({break_type}), key: {key}, duration: {duration} min")
                 
                 except Exception as e:
                     logger.warning(f"Error processing break entry: {e}")
