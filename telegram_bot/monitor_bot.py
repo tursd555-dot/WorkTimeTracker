@@ -168,12 +168,26 @@ class MonitorBot:
             now = now_moscow()
             recent_time = now - timedelta(hours=2)
             
+            logger.debug(f"Checking active breaks: now={now.isoformat()}, recent_time={recent_time.isoformat()}")
+            
             # Получаем активные перерывы (без end_time или с недавним start_time)
+            # Используем более широкий запрос - получаем все перерывы за последние 2 часа
             breaks = self.supabase.client.table('break_log').select('*').gte(
                 'start_time', recent_time.isoformat()
-            ).is_('end_time', 'null').execute()
+            ).execute()
             
             breaks_data = breaks.data if hasattr(breaks, 'data') else []
+            
+            # Фильтруем только активные (без end_time)
+            active_breaks = []
+            for break_entry in breaks_data:
+                end_time = break_entry.get('end_time')
+                if not end_time or (isinstance(end_time, str) and end_time.strip() == ''):
+                    active_breaks.append(break_entry)
+            
+            logger.debug(f"Found {len(breaks_data)} breaks total, {len(active_breaks)} active (no end_time)")
+            
+            breaks_data = active_breaks
             
             warnings_sent = 0
             for break_entry in breaks_data:
@@ -222,12 +236,24 @@ class MonitorBot:
                         
                         # Дебаунсинг: отправляем уведомление раз в 5 минут для каждого конкретного перерыва
                         # Но если это новый перерыв (новый break_id или новое start_time), отправляем сразу
-                        if last_sent is None or (now - last_sent).total_seconds() >= 300:  # 5 минут
+                        time_since_last = (now - last_sent).total_seconds() if last_sent else None
+                        
+                        if last_sent is None or time_since_last >= 300:  # 5 минут
                             overtime = int(duration - limit_minutes)
+                            logger.info(
+                                f"Sending break warning: {email} ({break_type}), "
+                                f"duration={duration:.1f}min, limit={limit_minutes}min, "
+                                f"overtime={overtime}min, key={key}, "
+                                f"time_since_last={time_since_last:.0f}s" if time_since_last else "first_warning"
+                            )
                             self._send_break_warning(email, break_type, duration, limit_minutes, overtime)
                             _sent_break_warnings[key] = now
                             warnings_sent += 1
-                            logger.debug(f"Sent break warning for {email} ({break_type}), key: {key}, duration: {duration} min")
+                        else:
+                            logger.debug(
+                                f"Skipping break warning (debounce): {email} ({break_type}), "
+                                f"key={key}, time_since_last={time_since_last:.0f}s"
+                            )
                 
                 except Exception as e:
                     logger.warning(f"Error processing break entry: {e}")
