@@ -30,11 +30,11 @@ def main():
         # Переходим в корень проекта
         os.chdir(str(project_root))
         
-        # Очистка
-        for dir_name in ['dist', 'build']:
-            if Path(dir_name).exists():
-                shutil.rmtree(dir_name)
-                logger.info(f"🧹 Очищена директория: {dir_name}")
+        # Очистка только build директории (dist очищается в build_all_windows.py)
+        build_dir = Path('build')
+        if build_dir.exists():
+            shutil.rmtree(build_dir)
+            logger.info(f"🧹 Очищена директория: {build_dir}")
 
         # Проверка существования файлов
         if not main_script.exists():
@@ -50,6 +50,8 @@ def main():
             '--noconfirm',
             '--log-level=WARN',
             '--paths=.',
+            # Собираем все зависимости openpyxl
+            '--collect-all', 'openpyxl',
         ]
         
         # Добавляем иконку, если существует
@@ -92,6 +94,26 @@ def main():
             'PyQt5.QtCore',
             'PyQt5.QtWidgets',
             'PyQt5.QtGui',
+            # Для экспорта в Excel
+            'openpyxl',
+            'openpyxl.styles',
+            'openpyxl.styles.fonts',
+            'openpyxl.styles.fills',
+            'openpyxl.styles.alignment',
+            'openpyxl.styles.borders',
+            'openpyxl.utils',
+            'openpyxl.utils.datetime',
+            'openpyxl.workbook',
+            'openpyxl.worksheet',
+            'openpyxl.cell',
+            'openpyxl.cell.cell',
+            'openpyxl.cell.text',
+            'et_xmlfile',
+            # Для работы с Supabase
+            'supabase',
+            'supabase.client',
+            'postgrest',
+            'realtime',
         ]
         
         for imp in hidden_imports:

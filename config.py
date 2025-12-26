@@ -95,14 +95,19 @@ GOOGLE_CREDENTIALS_FILE_ENV = (os.getenv("GOOGLE_CREDENTIALS_FILE") or "").strip
 USE_ZIP = bool(CREDENTIALS_ZIP.exists() and CREDENTIALS_ZIP_PASSWORD)
 USE_JSON_DIRECT = bool(GOOGLE_CREDENTIALS_FILE_ENV and not USE_ZIP)
 
-if USE_ZIP:
+# Если используется Supabase, Google credentials не обязательны
+if USE_SUPABASE:
+    # При использовании Supabase credentials не требуются
+    USE_ZIP = False
+    USE_JSON_DIRECT = False
+elif USE_ZIP:
     CREDENTIALS_ZIP_PASSWORD = CREDENTIALS_ZIP_PASSWORD.encode("utf-8")
 elif not USE_JSON_DIRECT:
-    # Ни ZIP+пароля, ни JSON-пути
+    # Ни ZIP+пароля, ни JSON-пути, и не используется Supabase
     raise RuntimeError(
         "Учетные данные не найдены. Положи зашифрованный архив рядом с EXE "
         f"({CREDENTIALS_ZIP_NAME}) и укажи CREDENTIALS_ZIP_PASSWORD в .env, "
-        "или укажи GOOGLE_CREDENTIALS_FILE."
+        "или укажи GOOGLE_CREDENTIALS_FILE, или используй Supabase (USE_SUPABASE=True)."
     )
 
 # --- Ленивая загрузка credentials ---
@@ -130,8 +135,26 @@ def credentials_path() -> Generator[Path, None, None]:
       1) ZIP рядом с EXE + CREDENTIALS_ZIP_PASSWORD
       2) GOOGLE_CREDENTIALS_FILE из .env (может быть относительным путём)
     Используйте: with credentials_path() as p: ...
+    
+    При использовании Supabase возвращает временный файл-заглушку.
     """
     global _CRED_MEMORY
+    
+    # Если используется Supabase, возвращаем заглушку
+    if USE_SUPABASE:
+        # Создаем временный пустой JSON файл для совместимости
+        import tempfile
+        import json
+        tmp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+        json.dump({}, tmp_file)
+        tmp_file.close()
+        tmp_path = Path(tmp_file.name)
+        try:
+            yield tmp_path
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        return
+    
     if USE_ZIP:
         zip_path = CREDENTIALS_ZIP
         if not zip_path.exists():
@@ -338,26 +361,34 @@ def validate_config() -> None:
     """Проверяет корректность конфигурации при запуске."""
     errors = []
     
-    # Проверяем наличие credentials в одном из режимов
-    try:
-        with credentials_path() as creds_file:
-            if not creds_file.exists():
-                errors.append(f"Файл учетных данных не найден: {creds_file}")
-    except Exception as e:
-        errors.append(f"Ошибка доступа к учетным данным: {e}")
+    # Проверяем наличие credentials только если не используется Supabase
+    if not USE_SUPABASE:
+        try:
+            with credentials_path() as creds_file:
+                if not creds_file.exists():
+                    errors.append(f"Файл учетных данных не найден: {creds_file}")
+        except Exception as e:
+            errors.append(f"Ошибка доступа к учетным данным: {e}")
 
-    # Проверим выбранную стратегию
-    if USE_ZIP:
-        if not CREDENTIALS_ZIP.exists():
-            errors.append(f"Архив с ключом не найден: {CREDENTIALS_ZIP}")
-        if not CREDENTIALS_ZIP_PASSWORD:
-            errors.append("CREDENTIALS_ZIP_PASSWORD не задан в .env")
-    elif not USE_JSON_DIRECT:
-        errors.append(
-            "Ни ZIP+пароль, ни GOOGLE_CREDENTIALS_FILE не заданы. "
-            "Ожидается архив рядом с EXE и CREDENTIALS_ZIP_PASSWORD в .env, "
-            "или переменная GOOGLE_CREDENTIALS_FILE."
-        )
+        # Проверим выбранную стратегию
+        if USE_ZIP:
+            if not CREDENTIALS_ZIP.exists():
+                errors.append(f"Архив с ключом не найден: {CREDENTIALS_ZIP}")
+            if not CREDENTIALS_ZIP_PASSWORD:
+                errors.append("CREDENTIALS_ZIP_PASSWORD не задан в .env")
+        elif not USE_JSON_DIRECT:
+            errors.append(
+                "Ни ZIP+пароль, ни GOOGLE_CREDENTIALS_FILE не заданы. "
+                "Ожидается архив рядом с EXE и CREDENTIALS_ZIP_PASSWORD в .env, "
+                "или переменная GOOGLE_CREDENTIALS_FILE, или используй Supabase (USE_SUPABASE=True)."
+            )
+    else:
+        # При использовании Supabase проверяем наличие переменных окружения
+        if not os.getenv("SUPABASE_URL") or not os.getenv("SUPABASE_KEY"):
+            errors.append(
+                "При использовании Supabase необходимо задать SUPABASE_URL и SUPABASE_KEY "
+                "в переменных окружения или в .env файле."
+            )
     
     if not LOG_DIR.exists():
         try:

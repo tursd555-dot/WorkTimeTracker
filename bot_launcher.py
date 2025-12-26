@@ -3,6 +3,7 @@ import sys
 import os
 import subprocess
 import threading
+import shutil
 from pathlib import Path
 from datetime import datetime
 from PyQt5.QtWidgets import (
@@ -57,9 +58,11 @@ class LogReaderThread(QThread):
 
 
 class BotLauncher(QWidget):
-    def __init__(self):
+    def __init__(self, mode="linker"):
         super().__init__()
-        self.setWindowTitle("WorkTimeTracker Bot — Monitor")
+        self.mode = mode  # "linker" или "monitor"
+        mode_name = "Linker Bot" if mode == "linker" else "Monitor Bot (24/7)"
+        self.setWindowTitle(f"WorkTimeTracker Bot — {mode_name}")
         self.resize(750, 450)
         self.process = None
         self.reader_thread = None
@@ -121,32 +124,79 @@ class BotLauncher(QWidget):
             self._append_log("⚠️ Бот уже запущен.")
             return
         try:
+            mode_text = "Linker Bot" if self.mode == "linker" else "Monitor Bot (24/7)"
             if auto:
-                self._append_log("🚀 Автозапуск Telegram-бота...")
+                self._append_log(f"🚀 Автозапуск {mode_text}...")
             else:
-                self._append_log("🔄 Перезапуск Telegram-бота...")
+                self._append_log(f"🔄 Перезапуск {mode_text}...")
 
             self.status_label.setText("🟡 Запуск бота...")
             self.status_label.setStyleSheet("color: orange; font-weight: bold; font-size: 16px;")
 
-            bot_script = Path(__file__).parent / "telegram_bot" / "main.py"
-
-            # --- Исправление цикла: не запускаем сам exe ---
+            # --- Исправление: правильный запуск из exe ---
             if getattr(sys, "frozen", False):
-                # если запущен exe — ищем системный python
-                py_exec = "python"
+                # Если запущен из собранного exe
+                exe_dir = Path(sys.executable).parent
+                _internal_dir = exe_dir / "_internal"
+                
+                # Проверяем, есть ли telegram_bot в _internal
+                internal_bot = _internal_dir / "telegram_bot" / "main.py"
+                
+                if internal_bot.exists():
+                    # Модуль найден в _internal - запускаем через python
+                    # Ищем python в системе или используем тот, что был при сборке
+                    system_python = shutil.which("python") or shutil.which("python3") or "python"
+                    cmd = [system_python, str(internal_bot)]
+                    cwd = str(_internal_dir.parent)  # Директория с exe
+                else:
+                    # Модуль не найден - пытаемся найти в исходниках проекта
+                    # (если exe запущен из директории проекта)
+                    project_root = Path(__file__).parent if hasattr(sys, '_MEIPASS') else Path.cwd()
+                    bot_script = project_root / "telegram_bot" / "main.py"
+                    
+                    if bot_script.exists():
+                        system_python = shutil.which("python") or shutil.which("python3") or "python"
+                        cmd = [system_python, str(bot_script)]
+                        cwd = str(project_root)
+                    else:
+                        # Последняя попытка - запустить через -m (если модуль в PYTHONPATH)
+                        system_python = shutil.which("python") or shutil.which("python3") or "python"
+                        cmd = [system_python, "-m", "telegram_bot.main"]
+                        cwd = str(exe_dir)
             else:
-                # если запущен из исходников — используем текущий интерпретатор
-                py_exec = sys.executable
+                # Если запущен из исходников — используем текущий интерпретатор
+                bot_script = Path(__file__).parent / "telegram_bot" / "main.py"
+                cmd = [sys.executable, str(bot_script)]
+                cwd = str(Path(__file__).parent)
+            
+            # Добавляем флаг режима
+            if self.mode == "monitor":
+                cmd.append("--monitor")
+            
+            # Важно: устанавливаем переменную окружения для режима
+            env = os.environ.copy()
+            env["BOT_MODE"] = self.mode
+            
+            # Добавляем путь к _internal в PYTHONPATH для exe
+            if getattr(sys, "frozen", False):
+                exe_dir = Path(sys.executable).parent
+                _internal_dir = exe_dir / "_internal"
+                if _internal_dir.exists():
+                    pythonpath = env.get("PYTHONPATH", "")
+                    if pythonpath:
+                        env["PYTHONPATH"] = f"{str(_internal_dir)}{os.pathsep}{pythonpath}"
+                    else:
+                        env["PYTHONPATH"] = str(_internal_dir)
 
             # важно: cwd = корень проекта, чтобы импортировался config.py
             self.process = subprocess.Popen(
-                [py_exec, str(bot_script)],
-                cwd=str(Path(__file__).parent),
+                cmd,
+                cwd=cwd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                bufsize=1
+                bufsize=1,
+                env=env
             )
 
             self.reader_thread = LogReaderThread(self.process)
@@ -195,7 +245,15 @@ class BotLauncher(QWidget):
 
 
 if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='WorkTimeTracker Bot Launcher')
+    parser.add_argument('--monitor', action='store_true', help='Запустить Monitor Bot (24/7) вместо Linker Bot')
+    args = parser.parse_args()
+    
+    mode = "monitor" if args.monitor else "linker"
+    
     app = QApplication(sys.argv)
-    win = BotLauncher()
+    win = BotLauncher(mode=mode)
     win.show()
     sys.exit(app.exec_())

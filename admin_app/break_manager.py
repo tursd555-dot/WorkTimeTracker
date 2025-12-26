@@ -331,16 +331,32 @@ class BreakManager:
             
             first = schedule_rows[0]
             
-            # Собираем лимиты (уникальные по типу)
+            # Собираем лимиты (считаем количество слотов каждого типа)
             limits_dict = {}
+            slot_counts = {}  # Счетчик слотов по типу
+            
+            # Сначала считаем количество слотов каждого типа
+            for row in schedule_rows:
+                break_type = row.get("SlotType", "")
+                if break_type:
+                    slot_counts[break_type] = slot_counts.get(break_type, 0) + 1
+            
+            # Создаем лимиты на основе количества слотов
             for row in schedule_rows:
                 break_type = row.get("SlotType", "")
                 if break_type and break_type not in limits_dict:
+                    # Используем количество слотов как daily_count
+                    daily_count = slot_counts.get(break_type, 3 if break_type == "Перерыв" else 1)
                     limits_dict[break_type] = BreakLimit(
                         break_type=break_type,
-                        daily_count=3 if break_type == "Перерыв" else 1,  # По умолчанию
+                        daily_count=daily_count,
                         time_minutes=int(row.get("Duration", "15"))
                     )
+            
+            logger.debug(
+                f"Schedule {schedule_id} limits: "
+                f"{[(lt.break_type, lt.daily_count) for lt in limits_dict.values()]}"
+            )
             
             # Собираем окна
             windows = []
@@ -771,7 +787,17 @@ class BreakManager:
             
             # 3. Проверить дневной лимит
             today_count = self._count_breaks_today(email, break_type)
-            quota_exceeded = today_count >= limit.daily_count
+            # today_count - это количество УЖЕ существующих перерывов до начала нового
+            # Новый перерыв будет (today_count + 1)-м
+            new_total_count = today_count + 1
+            quota_exceeded = new_total_count > limit.daily_count
+            
+            logger.info(
+                f"Quota check for {email} ({break_type}): "
+                f"existing={today_count}, new_total={new_total_count}, "
+                f"limit={limit.daily_count}, exceeded={quota_exceeded}"
+            )
+            
             if quota_exceeded:
                 # Превышение квоты - критическое нарушение
                 # НО разрешаем перерыв (не блокируем пользователя)
@@ -780,7 +806,7 @@ class BreakManager:
                     session_id=session_id,
                     violation_type=self.VIOLATION_QUOTA_EXCEEDED,
                     severity=self.SEVERITY_CRITICAL,
-                    details=f"Превышен дневной лимит {break_type}: {today_count+1}/{limit.daily_count}"
+                    details=f"Превышен дневной лимит {break_type}: {new_total_count}/{limit.daily_count}"
                 )
                 
                 # Отправить уведомление в группу (одно за нарушение)
@@ -789,7 +815,7 @@ class BreakManager:
                     send_quota_exceeded_notification(
                         email=email,
                         break_type=break_type,
-                        used_count=today_count + 1,
+                        used_count=new_total_count,  # Используем правильное количество
                         limit_count=limit.daily_count
                     )
                 except Exception as e:
@@ -1011,28 +1037,86 @@ class BreakManager:
     # =================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ===================
     
     def _count_breaks_today(self, email: str, break_type: str) -> int:
-        """Подсчитывает количество перерывов сегодня"""
+        """Подсчитывает количество перерывов сегодня (в московском времени)"""
         try:
-            ws = self.sheets.get_worksheet(self.USAGE_LOG_SHEET)
-            rows = self.sheets._read_table(ws)
-            
-            today = date.today().isoformat()
-            
-            count = 0
-            for row in rows:
-                row_email = row.get("Email") or row.get("email") or ""
-                row_break_type = row.get("BreakType") or row.get("break_type") or ""
-                start_time_str = row.get("StartTime") or row.get("start_time") or ""
+            # Проверяем, используем ли мы Supabase
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Используем Supabase напрямую
+                # Важно: используем московское время для определения "сегодня"
+                from shared.time_utils import now_moscow, to_moscow
+                from datetime import timezone, timedelta
                 
-                if (row_email.lower() == email.lower() and
-                    row_break_type == break_type and
-                    start_time_str.startswith(today)):
-                    count += 1
-            
-            return count
+                moscow_now = now_moscow()
+                today = moscow_now.date()
+                
+                # Получаем все перерывы за сегодня для данного пользователя и типа
+                # Сначала получаем все перерывы пользователя за последние 2 дня (на случай перехода через UTC)
+                result = self.sheets.client.table('break_log').select(
+                    'id,email,break_type,start_time,end_time'
+                ).eq('email', email.lower()).eq('break_type', break_type).execute()
+                
+                breaks_data = result.data if hasattr(result, 'data') else []
+                
+                # Фильтруем перерывы по московской дате
+                count = 0
+                for entry in breaks_data:
+                    start_time_str = entry.get('start_time')
+                    if not start_time_str:
+                        continue
+                    
+                    # Конвертируем start_time в московское время
+                    start_time_moscow = to_moscow(start_time_str)
+                    if start_time_moscow and start_time_moscow.date() == today:
+                        count += 1
+                
+                # Логируем детали для отладки
+                logger.info(
+                    f"Counted breaks for {email} ({break_type}): {count} "
+                    f"(from Supabase break_log, date={today.isoformat()} Moscow time, "
+                    f"total entries checked: {len(breaks_data)})"
+                )
+                
+                # Детальное логирование первых нескольких перерывов
+                if breaks_data:
+                    logger.debug(f"Break entries found for {email} ({break_type}):")
+                    for i, entry in enumerate(breaks_data[:10], 1):
+                        start_time_str = entry.get('start_time')
+                        start_time_moscow = to_moscow(start_time_str) if start_time_str else None
+                        logger.debug(
+                            f"  {i}. id={entry.get('id')}, "
+                            f"start_time={start_time_str}, "
+                            f"start_time_moscow={start_time_moscow}, "
+                            f"date_match={start_time_moscow.date() == today if start_time_moscow else False}"
+                        )
+                
+                return count
+            else:
+                # Используем Google Sheets через совместимый интерфейс
+                ws = self.sheets.get_worksheet(self.USAGE_LOG_SHEET)
+                rows = self.sheets._read_table(ws)
+                
+                today = date.today().isoformat()
+                
+                count = 0
+                for row in rows:
+                    row_email = row.get("Email") or row.get("email") or ""
+                    row_break_type = row.get("BreakType") or row.get("break_type") or ""
+                    start_time_str = row.get("StartTime") or row.get("start_time") or ""
+                    
+                    if (row_email.lower() == email.lower() and
+                        row_break_type == break_type and
+                        start_time_str.startswith(today)):
+                        count += 1
+                
+                logger.debug(
+                    f"Counted breaks for {email} ({break_type}): {count} "
+                    f"(from Google Sheets {self.USAGE_LOG_SHEET}, date={today})"
+                )
+                
+                return count
             
         except Exception as e:
-            logger.error(f"Failed to count breaks: {e}")
+            logger.error(f"Failed to count breaks for {email} ({break_type}): {e}", exc_info=True)
             return 0
     
     def _get_active_break(self, email: str, break_type: str) -> Optional[Dict]:

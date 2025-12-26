@@ -66,6 +66,10 @@ def check_requirements() -> bool:
     # Проверка необходимых файлов
     required_files = [
         "config.py",
+    ]
+    
+    # Опциональные файлы (предупреждение, но не ошибка)
+    optional_files = [
         "secret_creds.zip",
     ]
     
@@ -77,6 +81,11 @@ def check_requirements() -> bool:
     if missing_files:
         logger.error(f"❌ Отсутствуют необходимые файлы: {', '.join(missing_files)}")
         return False
+    
+    # Проверка опциональных файлов (только предупреждение)
+    for file_path in optional_files:
+        if not (PROJECT_ROOT / file_path).exists():
+            logger.warning(f"⚠ Опциональный файл не найден: {file_path} (будет пропущен при сборке)")
     
     # Проверка директорий
     required_dirs = [
