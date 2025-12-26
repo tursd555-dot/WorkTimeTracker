@@ -212,9 +212,16 @@ class MonitorBot:
                 break_type = break_entry.get('break_type', '')
                 start_time_str = break_entry.get('start_time', '')
                 break_id = break_entry.get('id')  # Уникальный ID перерыва из Supabase
+                status = break_entry.get('status', '')  # Статус перерыва
                 
                 if not email or not start_time_str:
                     continue
+                
+                # Логируем информацию о перерыве
+                logger.debug(
+                    f"Processing break: email={email}, type={break_type}, "
+                    f"id={break_id}, start={start_time_str}, status={status}"
+                )
                 
                 # Парсим время начала
                 try:
@@ -276,13 +283,22 @@ class MonitorBot:
                     logger.warning(f"Error processing break entry: {e}")
                     continue
             
-            # Очищаем старые записи
-            if len(_sent_break_warnings) > 500:
-                cutoff = now - timedelta(hours=24)
-                _sent_break_warnings = {
-                    k: v for k, v in _sent_break_warnings.items() 
-                    if v > cutoff
-                }
+            # Очищаем старые записи дебаунсинга (старше 1 часа)
+            # Это позволяет отправлять уведомления для новых перерывов
+            cutoff = now - timedelta(hours=1)
+            old_keys = [k for k, v in _sent_break_warnings.items() if v < cutoff]
+            for key in old_keys:
+                del _sent_break_warnings[key]
+            if old_keys:
+                logger.debug(f"Cleared {len(old_keys)} old break warning keys (older than 1 hour)")
+            
+            # Если все еще слишком много записей, очищаем все старше 30 минут
+            if len(_sent_break_warnings) > 1000:
+                cutoff_30min = now - timedelta(minutes=30)
+                old_keys_30min = [k for k, v in _sent_break_warnings.items() if v < cutoff_30min]
+                for key in old_keys_30min:
+                    del _sent_break_warnings[key]
+                logger.debug(f"Cleared {len(old_keys_30min)} break warning keys (older than 30 min) due to cache size")
             
             return warnings_sent
             
