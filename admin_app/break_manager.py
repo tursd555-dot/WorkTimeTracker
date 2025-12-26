@@ -331,16 +331,32 @@ class BreakManager:
             
             first = schedule_rows[0]
             
-            # Собираем лимиты (уникальные по типу)
+            # Собираем лимиты (считаем количество слотов каждого типа)
             limits_dict = {}
+            slot_counts = {}  # Счетчик слотов по типу
+            
+            # Сначала считаем количество слотов каждого типа
+            for row in schedule_rows:
+                break_type = row.get("SlotType", "")
+                if break_type:
+                    slot_counts[break_type] = slot_counts.get(break_type, 0) + 1
+            
+            # Создаем лимиты на основе количества слотов
             for row in schedule_rows:
                 break_type = row.get("SlotType", "")
                 if break_type and break_type not in limits_dict:
+                    # Используем количество слотов как daily_count
+                    daily_count = slot_counts.get(break_type, 3 if break_type == "Перерыв" else 1)
                     limits_dict[break_type] = BreakLimit(
                         break_type=break_type,
-                        daily_count=3 if break_type == "Перерыв" else 1,  # По умолчанию
+                        daily_count=daily_count,
                         time_minutes=int(row.get("Duration", "15"))
                     )
+            
+            logger.debug(
+                f"Schedule {schedule_id} limits: "
+                f"{[(lt.break_type, lt.daily_count) for lt in limits_dict.values()]}"
+            )
             
             # Собираем окна
             windows = []
