@@ -30,8 +30,6 @@ from config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_ADMIN_CHAT_ID,
     TELEGRAM_MONITORING_CHAT_ID,
-    SUPABASE_URL,
-    SUPABASE_KEY,
 )
 from telegram_bot.notifier import TelegramNotifier
 from supabase_api import get_supabase_api
