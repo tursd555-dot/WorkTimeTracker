@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import List, Dict, Optional
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from api_adapter import SheetsAPI, SheetsAPIError
 from config import (
@@ -237,4 +237,211 @@ class AdminRepo:
             return []
         except Exception as e:
             logger.exception("get_shift_calendar error: %s", e)
+            return []
+    
+    # -------------------------------------------------------------------------
+    # Reports
+    # -------------------------------------------------------------------------
+    def get_work_log_data(self, date_from: Optional[str] = None, date_to: Optional[str] = None,
+                         email: Optional[str] = None, group: Optional[str] = None) -> List[Dict]:
+        """
+        Получает данные из work_log для отчетов.
+        
+        Args:
+            date_from: Начальная дата (ISO формат YYYY-MM-DD)
+            date_to: Конечная дата (ISO формат YYYY-MM-DD)
+            email: Фильтр по email сотрудника
+            group: Фильтр по группе
+        
+        Returns:
+            Список записей work_log
+        """
+        try:
+            # Проверяем, является ли это Supabase API
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                query = self.sheets.client.table('work_log').select('*')
+                
+                # Фильтр по дате
+                # Учитываем возможное смещение часовых поясов: расширяем диапазон на ±1 день
+                # чтобы захватить все записи, которые могут относиться к выбранной дате
+                if date_from:
+                    try:
+                        date_from_dt = datetime.strptime(date_from, '%Y-%m-%d')
+                        # Начинаем с предыдущего дня (для учета записей, записанных в UTC, но относящихся к локальной дате)
+                        prev_day = date_from_dt - timedelta(days=1)
+                        query = query.gte('timestamp', prev_day.strftime('%Y-%m-%d') + 'T00:00:00+00:00')
+                        logger.debug(f"Date filter: date_from='{date_from}', using range from '{prev_day.isoformat()}'")
+                    except Exception as e:
+                        logger.warning(f"Failed to parse date_from '{date_from}': {e}, using fallback")
+                        query = query.gte('timestamp', f"{date_from}T00:00:00+00:00")
+                if date_to:
+                    # Используем начало следующего дня + 1 день для корректного захвата всех записей
+                    try:
+                        date_to_dt = datetime.strptime(date_to, '%Y-%m-%d')
+                        # Захватываем до конца следующего дня (для учета записей, записанных в UTC)
+                        next_next_day = date_to_dt + timedelta(days=2)
+                        date_to_end = next_next_day.strftime('%Y-%m-%d') + 'T00:00:00+00:00'
+                        query = query.lt('timestamp', date_to_end)
+                        logger.debug(f"Date filter: date_to='{date_to}', using range up to '{date_to_end}'")
+                    except Exception as e:
+                        logger.warning(f"Failed to parse date_to '{date_to}': {e}, using fallback")
+                        query = query.lt('timestamp', f"{(date_to_dt + timedelta(days=1)).strftime('%Y-%m-%d')}T00:00:00+00:00")
+                
+                # Фильтр по email
+                if email:
+                    # Если email содержит имя в скобках, извлекаем только email
+                    if '(' in email and ')' in email:
+                        email = email.split('(')[-1].rstrip(')')
+                    query = query.eq('email', email.lower().strip())
+                
+                response = query.execute()
+                data = response.data or []
+                
+                # Дополнительная фильтрация по дате на уровне Python для гарантии корректности
+                # Преобразуем UTC timestamp в локальное время для правильного сравнения с выбранной датой
+                if date_from or date_to:
+                    filtered_by_date = []
+                    # Получаем локальный часовой пояс
+                    try:
+                        from datetime import timezone as tz
+                        # Используем системный локальный timezone
+                        local_tz = datetime.now().astimezone().tzinfo
+                        # Вычисляем offset в часах
+                        test_dt = datetime.now(tz.utc)
+                        local_dt = test_dt.astimezone(local_tz)
+                        offset = local_dt.utcoffset()
+                        local_offset_hours = offset.total_seconds() / 3600
+                        logger.debug(f"Detected local timezone offset: UTC+{local_offset_hours} hours")
+                    except Exception as e:
+                        logger.warning(f"Failed to detect timezone: {e}, using UTC+3 as default")
+                        local_offset_hours = 3  # По умолчанию UTC+3 для Москвы
+                    
+                    for r in data:
+                        timestamp_str = r.get('timestamp', '')
+                        if not timestamp_str:
+                            continue
+                        
+                        try:
+                            # Парсим timestamp (предполагаем UTC)
+                            if 'T' in timestamp_str:
+                                # ISO формат
+                                clean_ts = timestamp_str.replace('Z', '+00:00')
+                                if '+' not in clean_ts and '-' in clean_ts[-6:]:
+                                    clean_ts = clean_ts + '+00:00'
+                                dt_utc = datetime.fromisoformat(clean_ts)
+                            else:
+                                dt_utc = datetime.strptime(timestamp_str[:19], '%Y-%m-%d %H:%M:%S')
+                                # Предполагаем UTC, если не указан timezone
+                                dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+                            
+                            # Преобразуем UTC в локальное время
+                            if dt_utc.tzinfo is None:
+                                dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+                            
+                            dt_local = dt_utc + timedelta(hours=local_offset_hours)
+                            entry_date = dt_local.date()
+                            
+                            # Логируем первые несколько записей для диагностики
+                            if len(filtered_by_date) < 3:
+                                logger.debug(f"Date filtering: UTC={dt_utc.date()} {dt_utc.strftime('%H:%M:%S')} -> "
+                                           f"Local={entry_date} {dt_local.strftime('%H:%M:%S')} (offset={local_offset_hours}h)")
+                            
+                            # Проверяем соответствие фильтрам (используем локальную дату)
+                            include = True
+                            if date_from:
+                                filter_from = datetime.strptime(date_from, '%Y-%m-%d').date()
+                                if entry_date < filter_from:
+                                    include = False
+                                    if len(filtered_by_date) < 3:
+                                        logger.debug(f"  Excluded: entry_date {entry_date} < filter_from {filter_from}")
+                            
+                            if include and date_to:
+                                filter_to = datetime.strptime(date_to, '%Y-%m-%d').date()
+                                if entry_date > filter_to:
+                                    include = False
+                                    if len(filtered_by_date) < 3:
+                                        logger.debug(f"  Excluded: entry_date {entry_date} > filter_to {filter_to}")
+                            
+                            if include:
+                                filtered_by_date.append(r)
+                        except Exception as e:
+                            logger.warning(f"Failed to parse timestamp '{timestamp_str}' for date filtering: {e}")
+                            # Включаем запись, если не удалось распарсить (на случай проблем с форматом)
+                            filtered_by_date.append(r)
+                    
+                    data = filtered_by_date
+                    logger.debug(f"After Python date filtering (local timezone UTC+{local_offset_hours}): {len(data)} records")
+                
+                # Фильтр по группе (если указан)
+                if group and group != "Все группы":
+                    users = self.list_users()
+                    group_emails = {u.get("Email", "").lower() for u in users if u.get("Group", "") == group}
+                    data = [r for r in data if r.get('email', '').lower() in group_emails]
+                
+                # Фильтруем только записи со статусами (исключаем тестовые данные без статусов)
+                # И записи с action_type STATUS_CHANGE или LOGIN
+                filtered_data = []
+                for r in data:
+                    status = r.get('status')
+                    action_type = r.get('action_type', '')
+                    # Включаем записи со статусом или важные action_type
+                    if status or action_type in ['STATUS_CHANGE', 'LOGIN', 'LOGOUT']:
+                        filtered_data.append(r)
+                
+                return filtered_data
+            else:
+                # Для Google Sheets - используем старый метод
+                # TODO: Реализовать для Google Sheets
+                logger.warning("get_work_log_data not implemented for Google Sheets")
+                return []
+        except Exception as e:
+            logger.exception("get_work_log_data error: %s", e)
+            return []
+    
+    def get_break_log_data(self, date_from: Optional[str] = None, date_to: Optional[str] = None,
+                           email: Optional[str] = None, group: Optional[str] = None) -> List[Dict]:
+        """
+        Получает данные из break_log для отчетов.
+        
+        Args:
+            date_from: Начальная дата (ISO формат YYYY-MM-DD)
+            date_to: Конечная дата (ISO формат YYYY-MM-DD)
+            email: Фильтр по email сотрудника
+            group: Фильтр по группе
+        
+        Returns:
+            Список записей break_log
+        """
+        try:
+            # Проверяем, является ли это Supabase API
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                query = self.sheets.client.table('break_log').select('*')
+                
+                # Фильтр по дате
+                if date_from:
+                    query = query.gte('date', date_from)
+                if date_to:
+                    query = query.lte('date', date_to)
+                
+                # Фильтр по email
+                if email:
+                    query = query.eq('email', email.lower())
+                
+                response = query.execute()
+                data = response.data or []
+                
+                # Фильтр по группе (если указан)
+                if group and group != "Все группы":
+                    users = self.list_users()
+                    group_emails = {u.get("Email", "").lower() for u in users if u.get("Group", "") == group}
+                    data = [r for r in data if r.get('email', '').lower() in group_emails]
+                
+                return data
+            else:
+                # Для Google Sheets - используем метод из break_manager
+                # TODO: Реализовать для Google Sheets
+                logger.warning("get_break_log_data not implemented for Google Sheets")
+                return []
+        except Exception as e:
+            logger.exception("get_break_log_data error: %s", e)
             return []

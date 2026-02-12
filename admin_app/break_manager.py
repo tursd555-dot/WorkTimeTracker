@@ -26,6 +26,34 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 
+def parse_time(time_str: str, default: str = "09:00") -> time:
+    """
+    Парсит строку времени, поддерживая форматы HH:MM и HH:MM:SS
+    
+    Args:
+        time_str: Строка времени (например, "09:00" или "09:00:00")
+        default: Значение по умолчанию, если парсинг не удался
+    
+    Returns:
+        time объект
+    """
+    if not time_str:
+        time_str = default
+    
+    # Пробуем разные форматы
+    for fmt in ["%H:%M:%S", "%H:%M"]:
+        try:
+            return datetime.strptime(time_str, fmt).time()
+        except ValueError:
+            continue
+    
+    # Если ничего не подошло, используем значение по умолчанию
+    try:
+        return datetime.strptime(default, "%H:%M").time()
+    except:
+        return time(9, 0)  # Fallback
+
+
 @dataclass
 class BreakLimit:
     """Лимит на перерывы/обеды"""
@@ -64,6 +92,52 @@ class BreakManager:
     def __init__(self, sheets_api):
         self.sheets = sheets_api
         self._cache: Dict[str, BreakSchedule] = {}
+        
+        # Импорт настроек ПЕРЕД использованием
+        try:
+            from config import (
+                BREAK_SCHEDULES_SHEET,
+                USER_BREAK_ASSIGNMENTS_SHEET,
+                BREAK_USAGE_LOG_SHEET,
+                BREAK_VIOLATIONS_SHEET,
+                BREAK_OVERTIME_THRESHOLD,
+                VIOLATION_TYPE_OUT_OF_WINDOW,
+                VIOLATION_TYPE_OVER_LIMIT,
+                VIOLATION_TYPE_QUOTA_EXCEEDED,
+                SEVERITY_INFO,
+                SEVERITY_WARNING,
+                SEVERITY_CRITICAL
+            )
+            self.SCHEDULES_SHEET = BREAK_SCHEDULES_SHEET
+            self.ASSIGNMENTS_SHEET = USER_BREAK_ASSIGNMENTS_SHEET
+            self.USAGE_LOG_SHEET = BREAK_USAGE_LOG_SHEET
+            self.VIOLATIONS_SHEET = BREAK_VIOLATIONS_SHEET
+            self.OVERTIME_THRESHOLD = BREAK_OVERTIME_THRESHOLD
+            self.VIOLATION_OUT_OF_WINDOW = VIOLATION_TYPE_OUT_OF_WINDOW
+            self.VIOLATION_OVER_LIMIT = VIOLATION_TYPE_OVER_LIMIT
+            self.VIOLATION_QUOTA_EXCEEDED = VIOLATION_TYPE_QUOTA_EXCEEDED
+            self.SEVERITY_INFO = SEVERITY_INFO
+            self.SEVERITY_WARNING = SEVERITY_WARNING
+            self.SEVERITY_CRITICAL = SEVERITY_CRITICAL
+        except ImportError as e:
+            logger.warning(f"Failed to import config: {e}, using defaults")
+            self.SCHEDULES_SHEET = "BreakSchedules"
+            self.ASSIGNMENTS_SHEET = "UserBreakAssignments"
+            self.USAGE_LOG_SHEET = "BreakUsageLog"
+            self.VIOLATIONS_SHEET = "BreakViolations"
+            self.OVERTIME_THRESHOLD = 2
+            self.VIOLATION_OUT_OF_WINDOW = "OUT_OF_WINDOW"
+            self.VIOLATION_OVER_LIMIT = "OVER_LIMIT"
+            self.VIOLATION_QUOTA_EXCEEDED = "QUOTA_EXCEEDED"
+            self.SEVERITY_INFO = "INFO"
+            self.SEVERITY_WARNING = "WARNING"
+            self.SEVERITY_CRITICAL = "CRITICAL"
+        
+        # Автоматическая очистка старых зависших перерывов при инициализации
+        try:
+            self._cleanup_old_active_breaks()
+        except Exception as e:
+            logger.warning(f"Failed to cleanup old breaks on init: {e}")
         
         # Импорт настроек
         try:
@@ -133,6 +207,50 @@ class BreakManager:
         try:
             ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
             
+            # Проверяем, является ли это Supabase API
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Для Supabase: сначала создаем основную запись (если её нет), затем слоты
+                # Проверяем, существует ли уже шаблон с таким именем
+                existing = self.sheets.client.table('break_schedules')\
+                    .select('id, name, description')\
+                    .eq('name', name)\
+                    .execute()
+                
+                # Проверяем, есть ли основная запись (без description или с пустым description)
+                main_record = None
+                for record in existing.data:
+                    desc = record.get('description')
+                    if not desc or desc.strip() == '':
+                        main_record = record
+                        break
+                
+                # Если основной записи нет, создаем её
+                if not main_record:
+                    schedule_data = {
+                        'name': name,
+                        'shift_start': shift_start,
+                        'shift_end': shift_end,
+                        'is_active': True,
+                        'description': None  # Основная запись без description
+                    }
+                    schedule_response = self.sheets.client.table('break_schedules').insert(schedule_data).execute()
+                    if schedule_response.data:
+                        main_record = schedule_response.data[0]
+                        logger.info(f"Created main schedule record: {main_record['id']} for name '{name}'")
+                else:
+                    # Обновляем shift_start и shift_end основной записи, если они изменились
+                    update_data = {}
+                    if shift_start and main_record.get('shift_start') != shift_start:
+                        update_data['shift_start'] = shift_start
+                    if shift_end and main_record.get('shift_end') != shift_end:
+                        update_data['shift_end'] = shift_end
+                    if update_data:
+                        self.sheets.client.table('break_schedules')\
+                            .update(update_data)\
+                            .eq('id', main_record['id'])\
+                            .execute()
+                        logger.debug(f"Updated main schedule record: {update_data}")
+            
             # Формируем строки для записи
             rows = []
             
@@ -184,7 +302,7 @@ class BreakManager:
             return False
     
     def get_schedule(self, schedule_id: str) -> Optional[BreakSchedule]:
-        """Получает шаблон графика по ID"""
+        """Получает шаблон графика по ID или имени"""
         # Проверяем кэш
         if schedule_id in self._cache:
             return self._cache[schedule_id]
@@ -194,7 +312,13 @@ class BreakManager:
             rows = self.sheets._read_table(ws)
             
             # Фильтруем строки для данного графика
-            schedule_rows = [r for r in rows if r.get("ScheduleID") == schedule_id]
+            # Пробуем найти по ScheduleID (UUID) или по Name (имя шаблона)
+            schedule_rows = [
+                r for r in rows 
+                if (r.get("ScheduleID") == schedule_id or 
+                    r.get("Name") == schedule_id or
+                    r.get("ScheduleUUID") == schedule_id)  # Также проверяем ScheduleUUID если есть
+            ]
             if not schedule_rows:
                 return None
             
@@ -215,23 +339,24 @@ class BreakManager:
             windows = []
             for row in schedule_rows:
                 try:
-                    window_start = datetime.strptime(row.get("WindowStart", "09:00"), "%H:%M").time()
-                    window_end = datetime.strptime(row.get("WindowEnd", "17:00"), "%H:%M").time()
+                    window_start = parse_time(row.get("WindowStart", "09:00"), "09:00")
+                    window_end = parse_time(row.get("WindowEnd", "17:00"), "17:00")
                     windows.append(BreakWindow(
                         break_type=row.get("SlotType", ""),
                         start_time=window_start,
                         end_time=window_end,
                         priority=int(row.get("Order", "1"))
                     ))
-                except:
+                except Exception as e:
+                    logger.debug(f"Failed to parse window for row: {e}")
                     pass
             
             # Создаём объект графика
             schedule = BreakSchedule(
                 schedule_id=schedule_id,
                 name=first.get("Name", ""),
-                shift_start=datetime.strptime(first.get("ShiftStart", "09:00"), "%H:%M").time(),
-                shift_end=datetime.strptime(first.get("ShiftEnd", "17:00"), "%H:%M").time(),
+                shift_start=parse_time(first.get("ShiftStart", "09:00"), "09:00"),
+                shift_end=parse_time(first.get("ShiftEnd", "17:00"), "17:00"),
                 limits=list(limits_dict.values()),
                 windows=windows
             )
@@ -251,20 +376,61 @@ class BreakManager:
             ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
             rows = self.sheets._read_table(ws)
             
-            # Группируем по schedule_id
+            # Группируем по name для Supabase (где name используется как идентификатор шаблона)
+            # В Supabase каждая запись имеет свой UUID, но шаблоны группируются по name
             schedules = {}
             for row in rows:
-                sid = row.get("ScheduleID", "").strip()
-                if not sid:
+                name = row.get("Name", "").strip()
+                if not name:
                     continue
                 
-                if sid not in schedules:
-                    schedules[sid] = {
-                        "schedule_id": sid,
-                        "name": row.get("Name", ""),
-                        "shift_start": row.get("ShiftStart", ""),
-                        "shift_end": row.get("ShiftEnd", "")
+                # Используем name как ключ для группировки
+                # Для schedule_id используем первый найденный UUID или name
+                if name not in schedules:
+                    # Ищем первый UUID для этого шаблона (из основной записи или первого слота)
+                    sid = row.get("ScheduleID") or row.get("Id") or row.get("id") or name
+                    schedules[name] = {
+                        "schedule_id": str(sid).strip(),
+                        "name": name,
+                        "shift_start": row.get("ShiftStart", "") or "",
+                        "shift_end": row.get("ShiftEnd", "") or "",
+                        "slots_data": []  # Инициализируем список слотов
                     }
+                
+                # Добавляем слот в список слотов шаблона
+                slot_type = row.get("SlotType") or row.get("slot_type") or ""
+                duration = row.get("Duration") or row.get("duration") or "15"
+                window_start = row.get("WindowStart") or row.get("window_start") or ""
+                window_end = row.get("WindowEnd") or row.get("window_end") or ""
+                order = row.get("Order") or row.get("priority") or row.get("order") or "1"
+                
+                # Проверяем, есть ли данные слота (либо в полях, либо в description как JSON)
+                description = row.get("Description") or row.get("description") or ""
+                # Пропускаем основную запись (без description или с пустым description)
+                if not description or description.strip() == '':
+                    continue  # Это основная запись шаблона, не слот
+                
+                if description and not slot_type:
+                    # Пробуем извлечь данные из JSON в description
+                    try:
+                        import json
+                        slot_info = json.loads(description)
+                        slot_type = slot_info.get('slot_type', '')
+                        duration = str(slot_info.get('duration', '15'))
+                        window_start = slot_info.get('window_start', '')
+                        window_end = slot_info.get('window_end', '')
+                        order = str(slot_info.get('priority', '1'))
+                    except (json.JSONDecodeError, KeyError, TypeError):
+                        pass
+                
+                if slot_type:  # Добавляем только если есть тип слота
+                    schedules[name]["slots_data"].append({
+                        "order": str(order),
+                        "type": slot_type,
+                        "duration": str(duration),
+                        "window_start": window_start or "09:00",
+                        "window_end": window_end or "17:00"
+                    })
             
             return list(schedules.values())
             
@@ -275,6 +441,32 @@ class BreakManager:
     def delete_schedule(self, schedule_id: str) -> bool:
         """Удаляет шаблон графика"""
         try:
+            # Проверяем, является ли это Supabase API
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Используем прямой метод удаления для Supabase
+                result = self.sheets._delete_rows_by_schedule_id("break_schedules", schedule_id)
+                if result:
+                    # Сбрасываем кэш шаблонов
+                    self._cache.pop(schedule_id, None)
+                    # Очищаем весь кэш назначений (так как назначения могли ссылаться на удалённый шаблон)
+                    # Находим все email, у которых был назначен этот шаблон, и очищаем их кэш
+                    try:
+                        ws = self.sheets.get_worksheet(self.ASSIGNMENTS_SHEET)
+                        assignments = self.sheets._read_table(ws)
+                        for assignment in assignments:
+                            assigned_schedule_id = assignment.get("ScheduleID") or assignment.get("ScheduleId") or assignment.get("Id")
+                            if assigned_schedule_id and str(assigned_schedule_id) == str(schedule_id):
+                                email = assignment.get("Email", "")
+                                if email:
+                                    # Очищаем кэш для этого пользователя (если есть метод для этого)
+                                    logger.debug(f"Clearing cache for user {email} after schedule deletion")
+                    except Exception as e:
+                        logger.debug(f"Could not clear assignment cache: {e}")
+                    
+                    logger.info(f"Deleted schedule: {schedule_id}")
+                return result
+            
+            # Старый код для Google Sheets
             ws = self.sheets.get_worksheet(self.SCHEDULES_SHEET)
             values = self.sheets._request_with_retry(ws.get_all_values)
             
@@ -307,7 +499,7 @@ class BreakManager:
             return True
             
         except Exception as e:
-            logger.error(f"Failed to delete schedule: {e}")
+            logger.error(f"Failed to delete schedule {schedule_id}: {e}", exc_info=True)
             return False
     
     # =================== НАЗНАЧЕНИЕ ГРАФИКОВ ===================
@@ -332,31 +524,120 @@ class BreakManager:
             rows = self.sheets._read_table(ws)
             existing = next((r for r in rows if r.get("Email", "").lower() == email.lower()), None)
             
-            if existing:
-                # Обновляем существующее назначение
-                # Находим номер строки
-                all_values = ws.get_all_values()
-                for idx, row in enumerate(all_values[1:], start=2):
-                    if row and row[0].lower() == email.lower():
-                        # Обновляем строку
-                        ws.update(f"A{idx}:D{idx}", [[
-                            email,
-                            schedule_id,
-                            datetime.now().strftime("%Y-%m-%d"),
-                            admin_email
-                        ]])
-                        logger.info(f"Updated schedule assignment for {email}")
+            # Проверяем, является ли это Supabase API
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Для Supabase API используем прямое обновление/вставку
+                if existing:
+                    # Обновляем существующее назначение
+                    try:
+                        # Находим id записи по email (пробуем разные варианты полей)
+                        assignment_id = None
+                        for email_field in ['email', 'user_email']:
+                            try:
+                                find_response = self.sheets.client.table('user_break_assignments')\
+                                    .select('id')\
+                                    .eq(email_field, email.lower())\
+                                    .execute()
+                                
+                                if find_response.data:
+                                    assignment_id = find_response.data[0]['id']
+                                    break
+                            except Exception:
+                                continue
+                        
+                        if assignment_id:
+                            # Нужно найти UUID шаблона по его имени или ID
+                            schedule_uuid = None
+                            try:
+                                import re
+                                uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
+                                is_uuid = uuid_pattern.match(str(schedule_id).strip())
+                                
+                                if is_uuid:
+                                    # Это уже UUID, проверяем что шаблон существует
+                                    find_schedule = self.sheets.client.table('break_schedules')\
+                                        .select('id')\
+                                        .eq('id', schedule_id)\
+                                        .execute()
+                                    if find_schedule.data:
+                                        schedule_uuid = find_schedule.data[0]['id']
+                                    else:
+                                        logger.error(f"Schedule UUID not found: {schedule_id}")
+                                        return False
+                                else:
+                                    # Это не UUID, ищем по имени
+                                    find_schedule = self.sheets.client.table('break_schedules')\
+                                        .select('id')\
+                                        .eq('name', schedule_id)\
+                                        .execute()
+                                    if find_schedule.data:
+                                        schedule_uuid = find_schedule.data[0]['id']
+                                    else:
+                                        logger.error(f"Schedule not found by name: {schedule_id}")
+                                        return False
+                            except Exception as e:
+                                logger.error(f"Failed to find schedule UUID: {e}", exc_info=True)
+                                return False
+                            
+                            # Обновляем назначение с UUID шаблона
+                            try:
+                                self.sheets.client.table('user_break_assignments')\
+                                    .update({'schedule_id': schedule_uuid})\
+                                    .eq('id', assignment_id)\
+                                    .execute()
+                                logger.info(f"Updated schedule assignment for {email}")
+                                return True
+                            except Exception as update_error:
+                                logger.error(f"Failed to update assignment: {update_error}", exc_info=True)
+                                return False
+                        else:
+                            logger.error(f"Assignment not found for {email}")
+                            return False
+                    except Exception as e:
+                        logger.error(f"Failed to update assignment: {e}", exc_info=True)
+                        return False
+                else:
+                    # Создаём новое назначение через append_row (который теперь поддерживает user_break_assignments)
+                    # Передаём только обязательные поля (email и schedule_id)
+                    result = ws.append_row([
+                        email,
+                        schedule_id,
+                        datetime.now().strftime("%Y-%m-%d"),  # Может быть проигнорировано если поле отсутствует
+                        admin_email  # Может быть проигнорировано если поле отсутствует
+                    ])
+                    if result:
+                        logger.info(f"Created schedule assignment for {email}")
                         return True
+                    else:
+                        logger.error(f"Failed to create assignment for {email}")
+                        return False
             else:
-                # Создаём новое назначение
-                ws.append_row([
-                    email,
-                    schedule_id,
-                    datetime.now().strftime("%Y-%m-%d"),
-                    admin_email
-                ])
-                logger.info(f"Created schedule assignment for {email}")
-                return True
+                # Старый код для Google Sheets
+                if existing:
+                    # Обновляем существующее назначение
+                    # Находим номер строки
+                    all_values = ws.get_all_values()
+                    for idx, row in enumerate(all_values[1:], start=2):
+                        if row and row[0].lower() == email.lower():
+                            # Обновляем строку
+                            ws.update(f"A{idx}:D{idx}", [[
+                                email,
+                                schedule_id,
+                                datetime.now().strftime("%Y-%m-%d"),
+                                admin_email
+                            ]])
+                            logger.info(f"Updated schedule assignment for {email}")
+                            return True
+                else:
+                    # Создаём новое назначение
+                    ws.append_row([
+                        email,
+                        schedule_id,
+                        datetime.now().strftime("%Y-%m-%d"),
+                        admin_email
+                    ])
+                    logger.info(f"Created schedule assignment for {email}")
+                    return True
             
             return False
             
@@ -453,7 +734,33 @@ class BreakManager:
             # 2. Найти лимит для этого типа
             limit = next((l for l in schedule.limits if l.break_type == break_type), None)
             if not limit:
-                return False, f"В вашем графике нет {break_type.lower()}а"
+                # Если лимита нет в графике, используем дефолтные значения и разрешаем перерыв
+                # Но фиксируем нарушение - перерыв вне разрешенного времени
+                logger.warning(f"No limit found for {break_type} in schedule, using defaults and allowing break")
+                
+                # Дефолтные лимиты
+                from dataclasses import dataclass
+                @dataclass
+                class DefaultLimit:
+                    break_type: str
+                    time_minutes: int
+                    daily_count: int
+                
+                if break_type == "Перерыв":
+                    limit = DefaultLimit("Перерыв", 15, 3)
+                elif break_type == "Обед":
+                    limit = DefaultLimit("Обед", 60, 1)
+                else:
+                    limit = DefaultLimit(break_type, 15, 1)
+                
+                # Фиксируем нарушение - перерыв вне разрешенного времени
+                self._log_violation(
+                    email=email,
+                    session_id=session_id,
+                    violation_type=self.VIOLATION_OUT_OF_WINDOW,
+                    severity=self.SEVERITY_WARNING,
+                    details=f"{break_type} начат вне разрешенного времени (нет слота в графике)"
+                )
             
             # 3. Проверить дневной лимит
             today_count = self._count_breaks_today(email, break_type)
@@ -489,10 +796,15 @@ class BreakManager:
             current_time = now.time()
             in_window = False
             
-            for window in schedule.windows:
-                if window.break_type == break_type and window.is_within(current_time):
-                    in_window = True
-                    break
+            # Проверяем окна только если они есть в графике
+            if schedule.windows:
+                for window in schedule.windows:
+                    if window.break_type == break_type and window.is_within(current_time):
+                        in_window = True
+                        break
+            else:
+                # Если окон нет в графике, считаем что перерыв вне окна
+                in_window = False
             
             # 5. Логировать начало
             self._log_break_start(
@@ -504,13 +816,13 @@ class BreakManager:
                 in_window=in_window
             )
             
-            # 6. Если вне окна - мягкое нарушение (только логируем)
+            # 6. Если вне окна - фиксируем нарушение (WARNING уровень, т.к. это более серьезно)
             if not in_window:
                 self._log_violation(
                     email=email,
                     session_id=session_id,
                     violation_type=self.VIOLATION_OUT_OF_WINDOW,
-                    severity=self.SEVERITY_INFO,
+                    severity=self.SEVERITY_WARNING,  # Изменено с INFO на WARNING
                     details=f"{break_type} начат вне временного окна ({current_time.strftime('%H:%M')})"
                 )
             
@@ -544,9 +856,30 @@ class BreakManager:
             
             # 2. Вычислить длительность
             now = datetime.now()
-            start_time = datetime.fromisoformat(active["StartTime"])
+            start_time_str = active.get("StartTime") or active.get("start_time") or ""
+            
+            # Поддерживаем разные форматы времени
+            try:
+                if isinstance(start_time_str, str):
+                    # Убираем timezone если есть (для совместимости)
+                    start_time_clean = start_time_str.replace('Z', '').split('+')[0].split('.')[0]
+                    # Пробуем разные форматы
+                    try:
+                        start_time = datetime.strptime(start_time_clean, "%Y-%m-%d %H:%M:%S")
+                    except ValueError:
+                        try:
+                            start_time = datetime.strptime(start_time_clean, "%Y-%m-%dT%H:%M:%S")
+                        except ValueError:
+                            # Используем fromisoformat как fallback
+                            start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                else:
+                    start_time = datetime.fromisoformat(str(start_time_str))
+            except Exception as e:
+                logger.error(f"Failed to parse start_time: {start_time_str}, error: {e}")
+                return False, f"Ошибка парсинга времени начала перерыва", None
+            
             duration = int((now - start_time).total_seconds() / 60)
-            limit = int(active.get("ExpectedDuration", "15"))
+            limit = int(active.get("ExpectedDuration") or active.get("Duration") or "15")
             
             # 3. Обновить запись об окончании
             self._update_break_end(
@@ -676,9 +1009,13 @@ class BreakManager:
             
             count = 0
             for row in rows:
-                if (row.get("Email", "").lower() == email.lower() and
-                    row.get("BreakType") == break_type and
-                    row.get("StartTime", "").startswith(today)):
+                row_email = row.get("Email") or row.get("email") or ""
+                row_break_type = row.get("BreakType") or row.get("break_type") or ""
+                start_time_str = row.get("StartTime") or row.get("start_time") or ""
+                
+                if (row_email.lower() == email.lower() and
+                    row_break_type == break_type and
+                    start_time_str.startswith(today)):
                     count += 1
             
             return count
@@ -697,10 +1034,24 @@ class BreakManager:
             
             # Ищем с конца (самый последний активный перерыв)
             for row in reversed(rows):
-                if (row.get("Email", "").lower() == email.lower() and
-                    row.get("BreakType") == break_type and
-                    not row.get("EndTime") and
-                    row.get("StartTime", "").startswith(today)):  # Только сегодня!
+                row_email = row.get("Email") or row.get("email") or ""
+                row_break_type = row.get("BreakType") or row.get("break_type") or ""
+                end_time = row.get("EndTime") or row.get("end_time") or None
+                status = row.get("Status") or row.get("status") or ""
+                start_time_str = row.get("StartTime") or row.get("start_time") or ""
+                
+                # Перерыв активен если: нет EndTime (None или пустая строка) И Status = 'Active' (или пустой/None)
+                has_end_time = end_time is not None and str(end_time).strip() != ''
+                is_active_status = status == 'Active' or status == '' or status is None or not status
+                is_active = not has_end_time and is_active_status
+                
+                # Ищем активный перерыв только за сегодня
+                is_today = start_time_str.startswith(today)
+                
+                if (row_email.lower() == email.lower() and
+                    row_break_type == break_type and
+                    is_active and
+                    is_today):  # Только сегодня!
                     return row
             
             return None
@@ -742,8 +1093,9 @@ class BreakManager:
                 "Active"  # Status
             ]
             
-            self.sheets._request_with_retry(lambda: ws.append_row(row))
-            logger.info(f"✅ Break logged to BreakLog: {email}, {break_type}")
+            logger.debug(f"Logging break start: email={email}, break_type={break_type}, start_time={start_time}, row={row}")
+            result = self.sheets._request_with_retry(lambda: ws.append_row(row))
+            logger.info(f"✅ Break logged to BreakLog: {email}, {break_type}, result={result}")
             
         except Exception as e:
             logger.error(f"❌ Failed to log break start: {e}")
@@ -757,6 +1109,46 @@ class BreakManager:
     ):
         """Обновляет запись об окончании перерыва (v20.3 format)"""
         try:
+            # Проверяем, является ли это Supabase API
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Для Supabase используем прямой метод обновления
+                try:
+                    from datetime import timezone
+                    # Находим активный перерыв по email и break_type без end_time
+                    response = self.sheets.client.table('break_log')\
+                        .select('id')\
+                        .eq('email', email.lower())\
+                        .eq('break_type', break_type)\
+                        .is_('end_time', 'null')\
+                        .order('start_time', desc=True)\
+                        .limit(1)\
+                        .execute()
+                    
+                    if response.data:
+                        break_id = response.data[0]['id']
+                        
+                        # Обновляем запись
+                        update_data = {
+                            'end_time': end_time.astimezone(timezone.utc).isoformat(),
+                            'duration_minutes': duration,
+                            'status': 'Completed'
+                        }
+                        
+                        self.sheets.client.table('break_log')\
+                            .update(update_data)\
+                            .eq('id', break_id)\
+                            .execute()
+                        
+                        logger.info(f"✅ Updated break end in Supabase: {email}, {break_type}, duration={duration} min")
+                        return
+                    else:
+                        logger.warning(f"No active break found to update: {email}, {break_type}")
+                        return
+                except Exception as e:
+                    logger.error(f"Failed to update break end in Supabase: {e}", exc_info=True)
+                    return
+            
+            # Старый код для Google Sheets
             ws = self.sheets.get_worksheet(self.USAGE_LOG_SHEET)
             all_values = ws.get_all_values()
             
@@ -797,7 +1189,7 @@ class BreakManager:
                     return
             
         except Exception as e:
-            logger.error(f"Failed to update break end: {e}")
+            logger.error(f"Failed to update break end: {e}", exc_info=True)
     
     def _log_violation(
         self,
@@ -820,9 +1212,12 @@ class BreakManager:
                 "pending"  # Status
             ]
             
-            self.sheets._request_with_retry(lambda: ws.append_row(row))
+            result = self.sheets._request_with_retry(lambda: ws.append_row(row))
             
-            logger.warning(f"Violation logged: {email}, {violation_type}, {severity}")
+            if result:
+                logger.warning(f"Violation logged: {email}, {violation_type}, {severity}")
+            else:
+                logger.error(f"Failed to log violation: {email}, {violation_type}, {severity}")
             
         except Exception as e:
             logger.error(f"Failed to log violation: {e}")
@@ -855,18 +1250,34 @@ class BreakManager:
             if email:
                 filtered = [r for r in filtered if r.get("Email", "").lower() == email.lower()]
             
+            def extract_date(ts_str):
+                """Извлекает дату из timestamp в формате YYYY-MM-DD"""
+                if not ts_str:
+                    return ""
+                ts_str = str(ts_str)
+                # ISO формат: 2025-12-11T14:30:00+00:00 или 2025-12-11T14:30:00
+                # Обычный формат: 2025-12-11 14:30:00
+                if 'T' in ts_str:
+                    return ts_str.split('T')[0][:10]
+                elif ' ' in ts_str:
+                    return ts_str.split(' ')[0][:10]
+                else:
+                    return ts_str[:10]
+            
             if date_from:
                 # Для дат без времени сравниваем первые 10 символов
                 if len(date_from) == 10:  # Формат YYYY-MM-DD
-                    filtered = [r for r in filtered if r.get("Timestamp", "")[:10] >= date_from]
+                    filtered = [r for r in filtered 
+                               if r.get("Timestamp") and extract_date(r.get("Timestamp", "")) >= date_from]
                 else:
                     filtered = [r for r in filtered if r.get("Timestamp", "") >= date_from]
             
             if date_to:
                 # Для date_to используем <= только если указано время
                 if len(date_to) == 10:  # Формат YYYY-MM-DD
-                    # Включаем весь день
-                    filtered = [r for r in filtered if r.get("Timestamp", "")[:10] <= date_to]
+                    # Включаем весь день - сравниваем первые 10 символов
+                    filtered = [r for r in filtered 
+                               if r.get("Timestamp") and extract_date(r.get("Timestamp", "")) <= date_to]
                 else:
                     filtered = [r for r in filtered if r.get("Timestamp", "") <= date_to]
             
@@ -947,11 +1358,15 @@ class BreakManager:
         windows_list = []
         
         for slot in slots_data:
-            slot_type = slot.get('slot_type', 'Перерыв')
-            duration = slot.get('duration', 15)
+            # Поддерживаем оба варианта ключей: 'type' (из диалога) и 'slot_type' (старый формат)
+            slot_type = slot.get('type') or slot.get('slot_type') or 'Перерыв'
+            # duration может быть строкой или числом
+            duration_val = slot.get('duration', 15)
+            duration = int(duration_val) if isinstance(duration_val, (int, str)) and str(duration_val).isdigit() else 15
             window_start = slot.get('window_start', '09:00')
             window_end = slot.get('window_end', '17:00')
-            order = slot.get('order', 1)
+            order_val = slot.get('order', 1)
+            order = int(order_val) if isinstance(order_val, (int, str)) and str(order_val).isdigit() else 1
             
             # Лимиты
             if slot_type not in limits_dict:
@@ -998,8 +1413,21 @@ class BreakManager:
         
         Фактически удаляет старый и создаёт новый
         """
-        # Удаляем старый
-        self.delete_schedule(schedule_id)
+        # Для Supabase удаляем по name, так как шаблоны группируются по name
+        # Проверяем, является ли это Supabase API
+        if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+            # Удаляем по name (в Supabase шаблоны группируются по name)
+            result = self.sheets._delete_rows_by_schedule_id("break_schedules", name)
+        else:
+            # Для Google Sheets удаляем по schedule_id
+            result = self.delete_schedule(schedule_id)
+        
+        if not result:
+            logger.warning(f"Failed to delete old schedule {name}, continuing anyway...")
+        
+        # Сбрасываем кэш
+        self._cache.pop(schedule_id, None)
+        self._cache.pop(name, None)
         
         # Создаём новый
         return self.create_schedule_template(
@@ -1059,7 +1487,9 @@ class BreakManager:
                 - BreakType  
                 - StartTime
                 - Duration (текущая длительность в минутах)
-                - is_over_limit (bool): превышен ли лимит
+                - is_over_limit (bool): превышен ли лимит времени
+                - is_violator (bool): является ли нарушителем
+                - violation_reason (str): причина нарушения (если есть)
         """
         try:
             ws = self.sheets.get_worksheet(self.USAGE_LOG_SHEET)
@@ -1067,15 +1497,35 @@ class BreakManager:
             
             today = date.today().isoformat()
             
-            # Ищем записи без EndTime за сегодня
+            # Ищем записи без EndTime (активные перерывы могут быть за любую дату)
             active = []
+            logger.debug(f"Checking for active breaks. Total rows: {len(rows)}, Today: {today}")
+            
             for row in rows:
-                if (not row.get('EndTime') and 
-                    row.get('StartTime', '').startswith(today)):
+                end_time = row.get('EndTime') or row.get('end_time') or None
+                status = row.get('Status') or row.get('status') or ''
+                start_time_str = str(row.get('StartTime') or row.get('start_time') or '')
+                
+                # Перерыв активен если: нет EndTime (None или пустая строка) И Status = 'Active' (или пустой/None)
+                # Проверяем end_time: None, пустая строка, или отсутствует в данных
+                has_end_time = end_time is not None and str(end_time).strip() != ''
+                is_active_status = status == 'Active' or status == '' or status is None or not status
+                is_active = not has_end_time and is_active_status
+                
+                # Проверяем, что запись за сегодня
+                is_today = start_time_str.startswith(today)
+                
+                logger.debug(f"Row check: email={row.get('Email') or row.get('email')}, "
+                           f"start_time={start_time_str}, end_time={end_time}, status={status}, "
+                           f"has_end_time={has_end_time}, is_active_status={is_active_status}, "
+                           f"is_active={is_active}, is_today={is_today}")
+                
+                # Включаем только активные перерывы за сегодня
+                if is_active and is_today:
                     
-                    email = row.get('Email')
-                    break_type = row.get('BreakType')
-                    start_time_str = row.get('StartTime')
+                    email = row.get('Email') or row.get('email') or ''
+                    break_type = row.get('BreakType') or row.get('break_type') or ''
+                    name = row.get('Name') or row.get('name') or ''
                     
                     # Вычисляем текущую длительность
                     duration = 0
@@ -1083,7 +1533,21 @@ class BreakManager:
                     
                     if start_time_str:
                         try:
-                            start_dt = datetime.fromisoformat(start_time_str)
+                            # Поддерживаем разные форматы времени
+                            if isinstance(start_time_str, str):
+                                # Убираем timezone если есть (для совместимости)
+                                start_time_clean = start_time_str.replace('Z', '').split('+')[0].split('.')[0]
+                                # Пробуем разные форматы
+                                try:
+                                    start_dt = datetime.strptime(start_time_clean, "%Y-%m-%d %H:%M:%S")
+                                except ValueError:
+                                    try:
+                                        start_dt = datetime.strptime(start_time_clean, "%Y-%m-%dT%H:%M:%S")
+                                    except ValueError:
+                                        # Используем fromisoformat как fallback
+                                        start_dt = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                            else:
+                                start_dt = datetime.fromisoformat(str(start_time_str))
                             duration = int((datetime.now() - start_dt).total_seconds() / 60)
                             
                             # Получаем лимит из графика (или дефолтный)
@@ -1092,22 +1556,70 @@ class BreakManager:
                             if break_type == "Обед":
                                 limit_minutes = 60
                             
+                            # Определяем нарушителя
+                            is_violator = False
+                            violation_reasons = []
+                            
+                            # 1. Проверка: нет назначенного шаблона
+                            if not schedule:
+                                is_violator = True
+                                violation_reasons.append("Нет назначенного шаблона")
+                            
+                            # 2. Проверка: превышено количество слотов за сегодня
                             if schedule:
                                 limit = next((l for l in schedule.limits if l.break_type == break_type), None)
                                 if limit:
                                     limit_minutes = limit.time_minutes
+                                    today_count = self._count_breaks_today(email, break_type)
+                                    if today_count > limit.daily_count:
+                                        is_violator = True
+                                        violation_reasons.append(f"Превышено количество ({today_count}/{limit.daily_count})")
+                                
+                                # 3. Проверка: перерыв вне временного окна (проверяем время НАЧАЛА перерыва)
+                                if schedule.windows:
+                                    try:
+                                        # Парсим время начала перерыва
+                                        start_time_clean = start_time_str.replace('Z', '').split('+')[0].split('.')[0]
+                                        try:
+                                            start_dt = datetime.strptime(start_time_clean, "%Y-%m-%d %H:%M:%S")
+                                        except ValueError:
+                                            try:
+                                                start_dt = datetime.strptime(start_time_clean, "%Y-%m-%dT%H:%M:%S")
+                                            except ValueError:
+                                                start_dt = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                                        
+                                        break_start_time = start_dt.time()
+                                        in_window = False
+                                        for window in schedule.windows:
+                                            if window.break_type == break_type and window.is_within(break_start_time):
+                                                in_window = True
+                                                break
+                                        if not in_window:
+                                            is_violator = True
+                                            violation_reasons.append("Перерыв вне временного окна")
+                                    except Exception as e:
+                                        logger.debug(f"Failed to check time window for {email}: {e}")
                             
+                            # 4. Проверка: превышен лимит времени
                             is_over_limit = duration > limit_minutes
+                            if is_over_limit:
+                                is_violator = True
+                                violation_reasons.append(f"Превышен лимит времени ({duration}/{limit_minutes} мин)")
                         except Exception as e:
                             logger.warning(f"Failed to calculate duration for {email}: {e}")
+                            is_violator = False
+                            violation_reasons = []
+                            is_over_limit = False
                     
                     active.append({
                         'Email': email,
-                        'Name': row.get('Name', ''),
+                        'Name': name,
                         'BreakType': break_type,
                         'StartTime': start_time_str,
                         'Duration': duration,
-                        'is_over_limit': is_over_limit
+                        'is_over_limit': is_over_limit,
+                        'is_violator': is_violator,
+                        'violation_reason': '; '.join(violation_reasons) if violation_reasons else None
                     })
             
             return active
@@ -1115,6 +1627,51 @@ class BreakManager:
         except Exception as e:
             logger.error(f"Failed to get active breaks: {e}")
             return []
+    
+    def _cleanup_old_active_breaks(self):
+        """
+        Автоматически завершает старые активные перерывы (не за сегодня)
+        Вызывается при инициализации BreakManager
+        """
+        try:
+            today = date.today().isoformat()
+            ws = self.sheets.get_worksheet(self.USAGE_LOG_SHEET)
+            rows = self.sheets._read_table(ws)
+            
+            cleaned_count = 0
+            for row in rows:
+                end_time = row.get('EndTime') or row.get('end_time') or None
+                status = row.get('Status') or row.get('status') or ''
+                start_time_str = str(row.get('StartTime') or row.get('start_time') or '')
+                
+                # Проверяем, что перерыв активен и не за сегодня
+                has_end_time = end_time is not None and str(end_time).strip() != ''
+                is_active_status = status == 'Active' or status == '' or status is None or not status
+                is_active = not has_end_time and is_active_status
+                is_today = start_time_str.startswith(today)
+                
+                if is_active and not is_today:
+                    # Старый активный перерыв - завершаем его
+                    email = row.get('Email') or row.get('email') or ''
+                    break_type = row.get('BreakType') or row.get('break_type') or ''
+                    
+                    if email and break_type:
+                        try:
+                            logger.info(f"Auto-cleaning old active break: {email}, {break_type}, start_time={start_time_str}")
+                            success, error, duration = self.end_break(email, break_type)
+                            if success:
+                                cleaned_count += 1
+                                logger.info(f"✅ Cleaned old break: {email}, duration={duration} min")
+                            else:
+                                logger.warning(f"Failed to clean old break for {email}: {error}")
+                        except Exception as e:
+                            logger.warning(f"Error cleaning old break for {email}: {e}")
+            
+            if cleaned_count > 0:
+                logger.info(f"Cleaned {cleaned_count} old active breaks on startup")
+            
+        except Exception as e:
+            logger.error(f"Error in _cleanup_old_active_breaks: {e}", exc_info=True)
 
 
 # Тестирование
