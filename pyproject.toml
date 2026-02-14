@@ -27,6 +27,7 @@ wtt-archive = "tools.archive_cli:main"
 wtt-telebot = "telegram_bot.main:main"
 wtt-send    = "tools.tg_send:main"
 wtt-tg-env  = "tools.tg_envcheck:main"
+wtt-sync    = "tools.sync_env:main"
 
 [tool.setuptools.packages.find]
 where   = ["."]

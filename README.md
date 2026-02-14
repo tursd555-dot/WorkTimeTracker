@@ -29,6 +29,26 @@
    python admin_app/main_admin.py
    ```
 
+## Environment Sync (new machine / cloud)
+
+Run one command to align dependencies and local config:
+
+```bash
+python3 tools/sync_env.py
+```
+
+What it does:
+- Installs runtime dependencies (`requirements.txt` + `supabase` + `keyrings.alt`)
+- Creates `.env` from `.env.example` if needed
+- Tries to auto-wire `GOOGLE_CREDENTIALS_FILE` if `service_account.json` is present
+- Runs a smoke import check for `config.py`
+
+For strict validation with diagnostics:
+
+```bash
+python3 tools/sync_env.py --strict --doctor
+```
+
 ## What's Included
 
 - ✅ Original project (85 files)
