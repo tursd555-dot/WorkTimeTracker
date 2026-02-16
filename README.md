@@ -72,6 +72,7 @@ python build_all_windows.py --bot
 ## Documentation
 
 - `BUILD_WINDOWS.md` - Инструкция по сборке приложений для Windows
+- `docs/GOOGLE_REALTIME_REPORTS_SETUP.md` - Realtime выгрузка в Google Sheets (через Supabase, без сервера)
 - `INTEGRATION_GUIDE.md` - How improvements are integrated
 - `CHANGES_MAP.md` - What was changed in code
 - `docs/` - Additional documentation
