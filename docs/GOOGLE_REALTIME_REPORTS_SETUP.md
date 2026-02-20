@@ -112,26 +112,24 @@ supabase functions deploy google-rt-worklog-sync
 
 ## Какие колонки будут в листе
 
-Лист `RT_Events` получает строки:
+Лист `RT_Events` получает строки (только локальное время):
 
 1. `EventId`
-2. `CreatedAtUTC`
-3. `EventTimeUTC`
-4. `EventTimeLocal`
-5. `Email`
-6. `Name`
-7. `Group`
-8. `SessionID`
+2. `Email`
+3. `Name`
+4. `Group`
+5. `SessionID`
+6. `ShiftStartLocal`
+7. `ShiftEndLocal`
+8. `ShiftDuration`
 9. `ActionType`
 10. `Status`
-11. `Comment`
-12. `Details`
-13. `StatusEndUTC`
-14. `StatusEndLocal`
-15. `StatusDurationSec`
-16. `StatusDurationMin`
+11. `StatusStartLocal`
+12. `StatusEndLocal`
+13. `StatusDuration`
+14. `Comment`
 
-`StatusDuration*` заполняется для `LOGIN/STATUS_CHANGE`, когда в логе уже есть следующее событие этой сессии.
+`StatusEndLocal`/`StatusDuration` заполняются, когда статус завершён следующим событием.
 
 ---
 

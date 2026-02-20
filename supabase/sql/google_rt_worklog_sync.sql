@@ -53,6 +53,9 @@ returns table (
     details text,
     status_end_ts timestamptz,
     status_duration_sec integer,
+    shift_start_ts timestamptz,
+    shift_end_ts timestamptz,
+    shift_duration_sec integer,
     closes_event_id uuid,
     closes_event_end_ts timestamptz,
     closes_event_duration_sec integer
@@ -129,6 +132,13 @@ as $$
             coalesce(b.details, '')::text as comment,
             coalesce(b.details, '')::text as details,
             nxt.next_ts as status_end_ts,
+            sh.shift_start_ts as shift_start_ts,
+            sh.shift_end_ts as shift_end_ts,
+            case
+                when sh.shift_start_ts is not null and sh.shift_end_ts is not null and sh.shift_end_ts >= sh.shift_start_ts
+                    then greatest(0, extract(epoch from (sh.shift_end_ts - sh.shift_start_ts))::integer)
+                else null
+            end as shift_duration_sec,
             prv.prev_id as closes_event_id,
             b.timestamp as closes_event_end_ts,
             case
@@ -161,6 +171,19 @@ as $$
             limit 1
         ) nxt
             on upper(coalesce(b.action_type, '')) in ('LOGIN', 'STATUS_CHANGE')
+        left join lateral (
+            select
+                min(case when upper(coalesce(wl_s.action_type, '')) = 'LOGIN' then wl_s.timestamp end) as shift_start_ts,
+                min(case when upper(coalesce(wl_s.action_type, '')) = 'LOGOUT' then wl_s.timestamp end) as shift_end_ts
+            from public.work_log wl_s
+            where lower(wl_s.email) = lower(b.email)
+              and upper(coalesce(wl_s.action_type, '')) in ('LOGIN', 'LOGOUT')
+              and (
+                  (coalesce(b.session_id, '') <> '' and coalesce(wl_s.session_id, '') = coalesce(b.session_id, ''))
+                  or (coalesce(b.session_id, '') = '' and coalesce(wl_s.session_id, '') = '')
+              )
+        ) sh
+            on true
         left join lateral (
             select
                 wl_prev.id as prev_id,
@@ -204,6 +227,9 @@ as $$
                 then greatest(0, extract(epoch from (e.status_end_ts - e.event_ts))::integer)
             else null
         end as status_duration_sec,
+        e.shift_start_ts,
+        e.shift_end_ts,
+        e.shift_duration_sec,
         e.closes_event_id,
         e.closes_event_end_ts,
         e.closes_event_duration_sec

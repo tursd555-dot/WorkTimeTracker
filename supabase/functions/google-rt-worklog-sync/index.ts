@@ -24,6 +24,9 @@ type ExportEvent = {
   details: string;
   status_end_ts: string | null;
   status_duration_sec: number | null;
+  shift_start_ts: string | null;
+  shift_end_ts: string | null;
+  shift_duration_sec: number | null;
   closes_event_id: string | null;
   closes_event_end_ts: string | null;
   closes_event_duration_sec: number | null;
@@ -34,21 +37,19 @@ const SYNC_SECRET = Deno.env.get("SYNC_WEBHOOK_SECRET") ?? "";
 
 const SHEET_HEADER = [
   "EventId",
-  "CreatedAtUTC",
-  "EventTimeUTC",
-  "EventTimeLocal",
   "Email",
   "Name",
   "Group",
   "SessionID",
+  "ShiftStartLocal",
+  "ShiftEndLocal",
+  "ShiftDuration",
   "ActionType",
   "Status",
-  "Comment",
-  "Details",
-  "StatusEndUTC",
+  "StatusStartLocal",
   "StatusEndLocal",
-  "StatusDurationSec",
-  "StatusDurationMin",
+  "StatusDuration",
+  "Comment",
 ];
 
 function jsonResponse(payload: unknown, status = 200): Response {
@@ -262,7 +263,7 @@ async function appendRows(
   if (!rows.length) return;
   const range = encodeURIComponent(`'${sheetName}'!A1`);
   const url =
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`;
   await googleJsonRequest(accessToken, url, {
     method: "POST",
     body: JSON.stringify({ values: rows }),
@@ -293,6 +294,32 @@ async function getEventRowMap(
   return map;
 }
 
+async function getSessionRowMap(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetName: string,
+): Promise<Map<string, number[]>> {
+  const range = encodeURIComponent(`'${sheetName}'!E2:E`);
+  const url =
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?majorDimension=ROWS`;
+
+  const payload = await googleJsonRequest(accessToken, url) as {
+    values?: string[][];
+  };
+
+  const rows = payload.values ?? [];
+  const map = new Map<string, number[]>();
+  for (let i = 0; i < rows.length; i += 1) {
+    const sessionId = String(rows[i]?.[0] ?? "").trim();
+    if (!sessionId) continue;
+    const rowNumber = i + 2;
+    const existing = map.get(sessionId) ?? [];
+    existing.push(rowNumber);
+    map.set(sessionId, existing);
+  }
+  return map;
+}
+
 async function batchUpdateValues(
   accessToken: string,
   spreadsheetId: string,
@@ -305,7 +332,7 @@ async function batchUpdateValues(
   await googleJsonRequest(accessToken, url, {
     method: "POST",
     body: JSON.stringify({
-      valueInputOption: "USER_ENTERED",
+      valueInputOption: "RAW",
       data: updates,
     }),
   });
@@ -359,28 +386,38 @@ function normalizeStatus(status: string | null | undefined): string {
   return canonical[key] ?? raw;
 }
 
+function formatDuration(totalSec: number | null | undefined): string {
+  if (totalSec === null || totalSec === undefined || !Number.isFinite(totalSec)) {
+    return "";
+  }
+  const sec = Math.max(0, Math.floor(totalSec));
+  const hh = Math.floor(sec / 3600);
+  const mm = Math.floor((sec % 3600) / 60);
+  const ss = sec % 60;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
+}
+
 function eventToSheetRow(event: ExportEvent, timeZone: string): string[] {
   const durationSec = event.status_duration_sec ?? null;
-  const durationMin = durationSec === null ? "" : (durationSec / 60).toFixed(2);
   const statusEndLocal = formatLocalDateTime(event.status_end_ts, timeZone);
+  const shiftStartLocal = formatLocalDateTime(event.shift_start_ts, timeZone);
+  const shiftEndLocal = formatLocalDateTime(event.shift_end_ts, timeZone);
 
   return [
     event.event_id ?? "",
-    event.created_at ?? "",
-    event.event_ts ?? "",
-    formatLocalDateTime(event.event_ts, timeZone),
     event.email ?? "",
     event.name ?? "",
     event.group_name ?? "Без группы",
     event.session_id ?? "",
+    shiftStartLocal,
+    shiftEndLocal,
+    formatDuration(event.shift_duration_sec),
     normalizeActionType(event.action_type),
     normalizeStatus(event.status),
-    event.comment ?? "",
-    event.details ?? "",
-    event.status_end_ts ?? "",
+    formatLocalDateTime(event.event_ts, timeZone),
     statusEndLocal,
-    durationSec === null ? "" : String(durationSec),
-    durationMin,
+    formatDuration(durationSec),
+    event.comment ?? "",
   ];
 }
 
@@ -502,15 +539,18 @@ Deno.serve(async (request: Request) => {
         break;
       }
 
-      const rows = batch.map((event) => eventToSheetRow(event, timeZone));
-      await appendRows(googleAccessToken, spreadsheetId, sheetName, rows);
+      const rowsToAppend = batch
+        .filter((event) => {
+          const action = normalizeActionType(event.action_type);
+          return action === "LOGIN" || action === "STATUS_CHANGE";
+        })
+        .map((event) => eventToSheetRow(event, timeZone));
+      await appendRows(googleAccessToken, spreadsheetId, sheetName, rowsToAppend);
 
       // Patch previously exported rows when a new event closes them.
       const closureMap = new Map<string, {
-        endUtc: string;
         endLocal: string;
-        durationSec: string;
-        durationMin: string;
+        duration: string;
       }>();
       for (const event of batch) {
         const closesId = String(event.closes_event_id ?? "").trim();
@@ -518,19 +558,9 @@ Deno.serve(async (request: Request) => {
         const endUtc = String(event.closes_event_end_ts ?? "").trim();
         if (!endUtc) continue;
 
-        const durationSecNum = event.closes_event_duration_sec;
-        const durationSec = durationSecNum === null || durationSecNum === undefined
-          ? ""
-          : String(Math.max(0, durationSecNum));
-        const durationMin = durationSec
-          ? (Number(durationSec) / 60).toFixed(2)
-          : "";
-
         closureMap.set(closesId, {
-          endUtc,
           endLocal: formatLocalDateTime(endUtc, timeZone),
-          durationSec,
-          durationMin,
+          duration: formatDuration(event.closes_event_duration_sec),
         });
       }
 
@@ -546,17 +576,50 @@ Deno.serve(async (request: Request) => {
           const rowNumber = eventRowMap.get(closedEventId);
           if (!rowNumber) continue;
           updates.push({
-            range: `'${sheetName}'!M${rowNumber}:P${rowNumber}`,
+            range: `'${sheetName}'!L${rowNumber}:M${rowNumber}`,
             values: [[
-              closure.endUtc,
               closure.endLocal,
-              closure.durationSec,
-              closure.durationMin,
+              closure.duration,
             ]],
           });
         }
 
         await batchUpdateValues(googleAccessToken, spreadsheetId, updates);
+      }
+
+      // When logout appears, patch shift end/duration for all rows in this session.
+      const sessionClosureMap = new Map<string, { shiftEndLocal: string; shiftDuration: string }>();
+      for (const event of batch) {
+        if (normalizeActionType(event.action_type) !== "LOGOUT") continue;
+        const sessionId = String(event.session_id ?? "").trim();
+        if (!sessionId) continue;
+        const shiftEndTs = String(event.shift_end_ts ?? event.event_ts ?? "").trim();
+        if (!shiftEndTs) continue;
+        sessionClosureMap.set(sessionId, {
+          shiftEndLocal: formatLocalDateTime(shiftEndTs, timeZone),
+          shiftDuration: formatDuration(event.shift_duration_sec),
+        });
+      }
+
+      if (sessionClosureMap.size > 0) {
+        const sessionRowMap = await getSessionRowMap(
+          googleAccessToken,
+          spreadsheetId,
+          sheetName,
+        );
+        const sessionUpdates: Array<{ range: string; values: string[][] }> = [];
+
+        for (const [sessionId, closure] of sessionClosureMap.entries()) {
+          const rows = sessionRowMap.get(sessionId) ?? [];
+          for (const rowNumber of rows) {
+            sessionUpdates.push({
+              range: `'${sheetName}'!G${rowNumber}:H${rowNumber}`,
+              values: [[closure.shiftEndLocal, closure.shiftDuration]],
+            });
+          }
+        }
+
+        await batchUpdateValues(googleAccessToken, spreadsheetId, sessionUpdates);
       }
 
       const last = batch[batch.length - 1];
