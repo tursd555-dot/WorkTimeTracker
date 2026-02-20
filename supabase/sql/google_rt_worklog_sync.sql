@@ -52,12 +52,15 @@ returns table (
     comment text,
     details text,
     status_end_ts timestamptz,
-    status_duration_sec integer
+    status_duration_sec integer,
+    closes_event_id uuid,
+    closes_event_end_ts timestamptz,
+    closes_event_duration_sec integer
 )
 language sql
 stable
 as $$
-    with batch as (
+    with base as (
         select
             wl.id,
             wl.created_at,
@@ -80,7 +83,36 @@ as $$
                   )
               )
           )
-        order by wl.created_at asc, wl.id asc
+    ),
+    batch as (
+        -- Глобальная дедупликация ретраев: оставляем только самую раннюю запись
+        -- с одинаковым email/session/action/status/details/timestamp.
+        select
+            b.id,
+            b.created_at,
+            b.timestamp,
+            b.email,
+            b.name,
+            b.session_id,
+            b.action_type,
+            b.status,
+            b.details
+        from base b
+        where not exists (
+            select 1
+            from public.work_log w0
+            where lower(coalesce(w0.email, '')) = lower(coalesce(b.email, ''))
+              and coalesce(w0.session_id, '') = coalesce(b.session_id, '')
+              and upper(coalesce(w0.action_type, '')) = upper(coalesce(b.action_type, ''))
+              and coalesce(w0.status, '') = coalesce(b.status, '')
+              and coalesce(w0.details, '') = coalesce(b.details, '')
+              and w0.timestamp = b.timestamp
+              and (
+                  w0.created_at < b.created_at
+                  or (w0.created_at = b.created_at and w0.id::text < b.id::text)
+              )
+        )
+        order by b.created_at asc, b.id asc
         limit greatest(1, least(coalesce(p_limit, 500), 5000))
     ),
     enriched as (
@@ -96,7 +128,14 @@ as $$
             coalesce(b.status, '')::text as status,
             coalesce(b.details, '')::text as comment,
             coalesce(b.details, '')::text as details,
-            nxt.next_ts as status_end_ts
+            nxt.next_ts as status_end_ts,
+            prv.prev_id as closes_event_id,
+            b.timestamp as closes_event_end_ts,
+            case
+                when prv.prev_ts is not null
+                    then greatest(0, extract(epoch from (b.timestamp - prv.prev_ts))::integer)
+                else null
+            end as closes_event_duration_sec
         from batch b
         left join public.users u
             on lower(u.email) = lower(b.email)
@@ -110,10 +149,7 @@ as $$
                   or coalesce(wl2.session_id, '') = coalesce(b.session_id, '')
                   or coalesce(wl2.session_id, '') = ''
               )
-              and (
-                  wl2.timestamp > b.timestamp
-                  or (wl2.timestamp = b.timestamp and wl2.id::text > b.id::text)
-              )
+              and wl2.timestamp > b.timestamp
             order by
                 case
                     when coalesce(wl2.session_id, '') = coalesce(b.session_id, '') then 0
@@ -125,6 +161,30 @@ as $$
             limit 1
         ) nxt
             on upper(coalesce(b.action_type, '')) in ('LOGIN', 'STATUS_CHANGE')
+        left join lateral (
+            select
+                wl_prev.id as prev_id,
+                wl_prev.timestamp as prev_ts
+            from public.work_log wl_prev
+            where lower(wl_prev.email) = lower(b.email)
+              and upper(coalesce(wl_prev.action_type, '')) in ('LOGIN', 'STATUS_CHANGE')
+              and (
+                  coalesce(b.session_id, '') = ''
+                  or coalesce(wl_prev.session_id, '') = coalesce(b.session_id, '')
+                  or coalesce(wl_prev.session_id, '') = ''
+              )
+              and wl_prev.timestamp < b.timestamp
+            order by
+                case
+                    when coalesce(wl_prev.session_id, '') = coalesce(b.session_id, '') then 0
+                    when coalesce(wl_prev.session_id, '') = '' then 1
+                    else 2
+                end,
+                wl_prev.timestamp desc,
+                wl_prev.id desc
+            limit 1
+        ) prv
+            on upper(coalesce(b.action_type, '')) in ('STATUS_CHANGE', 'LOGOUT')
     )
     select
         e.event_id,
@@ -143,7 +203,10 @@ as $$
             when e.action_type in ('LOGIN', 'STATUS_CHANGE') and e.status_end_ts is not null
                 then greatest(0, extract(epoch from (e.status_end_ts - e.event_ts))::integer)
             else null
-        end as status_duration_sec
+        end as status_duration_sec,
+        e.closes_event_id,
+        e.closes_event_end_ts,
+        e.closes_event_duration_sec
     from enriched e
     order by e.created_at asc, e.event_id asc;
 $$;

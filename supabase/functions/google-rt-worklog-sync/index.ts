@@ -24,6 +24,9 @@ type ExportEvent = {
   details: string;
   status_end_ts: string | null;
   status_duration_sec: number | null;
+  closes_event_id: string | null;
+  closes_event_end_ts: string | null;
+  closes_event_duration_sec: number | null;
 };
 
 const SYNC_NAME = "google_rt_worklog_sync";
@@ -266,6 +269,48 @@ async function appendRows(
   });
 }
 
+async function getEventRowMap(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetName: string,
+): Promise<Map<string, number>> {
+  const range = encodeURIComponent(`'${sheetName}'!A2:A`);
+  const url =
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?majorDimension=ROWS`;
+
+  const payload = await googleJsonRequest(accessToken, url) as {
+    values?: string[][];
+  };
+
+  const rows = payload.values ?? [];
+  const map = new Map<string, number>();
+  for (let i = 0; i < rows.length; i += 1) {
+    const eventId = String(rows[i]?.[0] ?? "").trim();
+    if (eventId) {
+      map.set(eventId, i + 2); // sheet row index (header is row 1)
+    }
+  }
+  return map;
+}
+
+async function batchUpdateValues(
+  accessToken: string,
+  spreadsheetId: string,
+  updates: Array<{ range: string; values: string[][] }>,
+): Promise<void> {
+  if (!updates.length) return;
+
+  const url =
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`;
+  await googleJsonRequest(accessToken, url, {
+    method: "POST",
+    body: JSON.stringify({
+      valueInputOption: "USER_ENTERED",
+      data: updates,
+    }),
+  });
+}
+
 function formatLocalDateTime(iso: string | null | undefined, timeZone: string): string {
   if (!iso) return "";
   const date = new Date(iso);
@@ -459,6 +504,60 @@ Deno.serve(async (request: Request) => {
 
       const rows = batch.map((event) => eventToSheetRow(event, timeZone));
       await appendRows(googleAccessToken, spreadsheetId, sheetName, rows);
+
+      // Patch previously exported rows when a new event closes them.
+      const closureMap = new Map<string, {
+        endUtc: string;
+        endLocal: string;
+        durationSec: string;
+        durationMin: string;
+      }>();
+      for (const event of batch) {
+        const closesId = String(event.closes_event_id ?? "").trim();
+        if (!closesId) continue;
+        const endUtc = String(event.closes_event_end_ts ?? "").trim();
+        if (!endUtc) continue;
+
+        const durationSecNum = event.closes_event_duration_sec;
+        const durationSec = durationSecNum === null || durationSecNum === undefined
+          ? ""
+          : String(Math.max(0, durationSecNum));
+        const durationMin = durationSec
+          ? (Number(durationSec) / 60).toFixed(2)
+          : "";
+
+        closureMap.set(closesId, {
+          endUtc,
+          endLocal: formatLocalDateTime(endUtc, timeZone),
+          durationSec,
+          durationMin,
+        });
+      }
+
+      if (closureMap.size > 0) {
+        const eventRowMap = await getEventRowMap(
+          googleAccessToken,
+          spreadsheetId,
+          sheetName,
+        );
+
+        const updates: Array<{ range: string; values: string[][] }> = [];
+        for (const [closedEventId, closure] of closureMap.entries()) {
+          const rowNumber = eventRowMap.get(closedEventId);
+          if (!rowNumber) continue;
+          updates.push({
+            range: `'${sheetName}'!M${rowNumber}:P${rowNumber}`,
+            values: [[
+              closure.endUtc,
+              closure.endLocal,
+              closure.durationSec,
+              closure.durationMin,
+            ]],
+          });
+        }
+
+        await batchUpdateValues(googleAccessToken, spreadsheetId, updates);
+      }
 
       const last = batch[batch.length - 1];
       checkpointCreatedAt = last.created_at;
