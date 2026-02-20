@@ -32,6 +32,8 @@ create index if not exists idx_work_log_email_session_ts
 
 -- Incremental feed for Edge Function.
 -- Returns only LOGIN / LOGOUT / STATUS_CHANGE events.
+drop function if exists public.get_worklog_events_for_google_sync(timestamptz, uuid, integer);
+
 create or replace function public.get_worklog_events_for_google_sync(
     p_after_created_at timestamptz,
     p_after_event_id uuid default null,
@@ -47,6 +49,7 @@ returns table (
     session_id text,
     action_type text,
     status text,
+    comment text,
     details text,
     status_end_ts timestamptz,
     status_duration_sec integer
@@ -66,7 +69,7 @@ as $$
             wl.status,
             wl.details
         from public.work_log wl
-        where wl.action_type in ('LOGIN', 'LOGOUT', 'STATUS_CHANGE')
+        where upper(coalesce(wl.action_type, '')) in ('LOGIN', 'LOGOUT', 'STATUS_CHANGE')
           and (
               wl.created_at > coalesce(p_after_created_at, 'epoch'::timestamptz)
               or (
@@ -89,8 +92,9 @@ as $$
             coalesce(nullif(b.name, ''), u.name, '')::text as name,
             coalesce(nullif(u.group_name, ''), 'Без группы')::text as group_name,
             coalesce(b.session_id, '')::text as session_id,
-            b.action_type::text as action_type,
+            upper(coalesce(b.action_type, ''))::text as action_type,
             coalesce(b.status, '')::text as status,
+            coalesce(b.details, '')::text as comment,
             coalesce(b.details, '')::text as details,
             nxt.next_ts as status_end_ts
         from batch b
@@ -100,15 +104,27 @@ as $$
             select wl2.timestamp as next_ts
             from public.work_log wl2
             where lower(wl2.email) = lower(b.email)
-              and coalesce(wl2.session_id, '') = coalesce(b.session_id, '')
+              and upper(coalesce(wl2.action_type, '')) in ('LOGIN', 'LOGOUT', 'STATUS_CHANGE')
+              and (
+                  coalesce(b.session_id, '') = ''
+                  or coalesce(wl2.session_id, '') = coalesce(b.session_id, '')
+                  or coalesce(wl2.session_id, '') = ''
+              )
               and (
                   wl2.timestamp > b.timestamp
                   or (wl2.timestamp = b.timestamp and wl2.id::text > b.id::text)
               )
-            order by wl2.timestamp asc, wl2.id asc
+            order by
+                case
+                    when coalesce(wl2.session_id, '') = coalesce(b.session_id, '') then 0
+                    when coalesce(wl2.session_id, '') = '' then 1
+                    else 2
+                end,
+                wl2.timestamp asc,
+                wl2.id asc
             limit 1
         ) nxt
-            on b.action_type in ('LOGIN', 'STATUS_CHANGE')
+            on upper(coalesce(b.action_type, '')) in ('LOGIN', 'STATUS_CHANGE')
     )
     select
         e.event_id,
@@ -120,6 +136,7 @@ as $$
         e.session_id,
         e.action_type,
         e.status,
+        e.comment,
         e.details,
         e.status_end_ts,
         case

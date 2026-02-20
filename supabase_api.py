@@ -1618,6 +1618,16 @@ class SupabaseAPI:
             # Поле user_group отсутствует в схеме work_log, поэтому не добавляем его
             records = []
             for action in actions:
+                comment_text = (action.get('comment') or "").strip()
+                details_text = (action.get('details') or "").strip()
+                reason_text = (action.get('reason') or "").strip()
+
+                # В work_log нет отдельной колонки comment, поэтому сохраняем
+                # комментарий пользователя в details (с fallback на details/reason).
+                details_payload = comment_text or details_text
+                if reason_text:
+                    details_payload = f"{details_payload} | reason: {reason_text}" if details_payload else f"reason: {reason_text}"
+
                 record = {
                     'user_id': user_id,
                     'email': email.lower(),
@@ -1625,7 +1635,8 @@ class SupabaseAPI:
                     'timestamp': action.get('timestamp') or datetime.now(timezone.utc).isoformat(),
                     'action_type': action.get('action_type', ''),
                     'status': action.get('status', ''),
-                    'session_id': action.get('session_id', '')
+                    'session_id': action.get('session_id', ''),
+                    'details': details_payload
                 }
                 # Удаляем пустые значения
                 record = {k: v for k, v in record.items() if v is not None and v != ''}

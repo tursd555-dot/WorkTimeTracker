@@ -20,6 +20,7 @@ type ExportEvent = {
   session_id: string;
   action_type: string;
   status: string;
+  comment: string;
   details: string;
   status_end_ts: string | null;
   status_duration_sec: number | null;
@@ -39,8 +40,10 @@ const SHEET_HEADER = [
   "SessionID",
   "ActionType",
   "Status",
+  "Comment",
   "Details",
   "StatusEndUTC",
+  "StatusEndLocal",
   "StatusDurationSec",
   "StatusDurationMin",
 ];
@@ -287,9 +290,34 @@ function formatLocalDateTime(iso: string | null | undefined, timeZone: string): 
   return `${map.get("year")}-${map.get("month")}-${map.get("day")} ${map.get("hour")}:${map.get("minute")}:${map.get("second")}`;
 }
 
+function normalizeActionType(actionType: string | null | undefined): string {
+  return String(actionType ?? "").trim().toUpperCase();
+}
+
+function normalizeStatus(status: string | null | undefined): string {
+  const raw = String(status ?? "").trim();
+  if (!raw) return "";
+
+  const key = raw.toLowerCase();
+  const canonical: Record<string, string> = {
+    "в работе": "В работе",
+    "чат": "Чат",
+    "аудио": "Аудио",
+    "запись": "Запись",
+    "анкеты": "Анкеты",
+    "перерыв": "Перерыв",
+    "обед": "Обед",
+    "цито": "ЦИТО",
+    "обучение": "Обучение",
+  };
+
+  return canonical[key] ?? raw;
+}
+
 function eventToSheetRow(event: ExportEvent, timeZone: string): string[] {
   const durationSec = event.status_duration_sec ?? null;
   const durationMin = durationSec === null ? "" : (durationSec / 60).toFixed(2);
+  const statusEndLocal = formatLocalDateTime(event.status_end_ts, timeZone);
 
   return [
     event.event_id ?? "",
@@ -300,10 +328,12 @@ function eventToSheetRow(event: ExportEvent, timeZone: string): string[] {
     event.name ?? "",
     event.group_name ?? "Без группы",
     event.session_id ?? "",
-    event.action_type ?? "",
-    event.status ?? "",
+    normalizeActionType(event.action_type),
+    normalizeStatus(event.status),
+    event.comment ?? "",
     event.details ?? "",
     event.status_end_ts ?? "",
+    statusEndLocal,
     durationSec === null ? "" : String(durationSec),
     durationMin,
   ];

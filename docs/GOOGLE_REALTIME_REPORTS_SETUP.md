@@ -124,10 +124,12 @@ supabase functions deploy google-rt-worklog-sync
 8. `SessionID`
 9. `ActionType`
 10. `Status`
-11. `Details`
-12. `StatusEndUTC`
-13. `StatusDurationSec`
-14. `StatusDurationMin`
+11. `Comment`
+12. `Details`
+13. `StatusEndUTC`
+14. `StatusEndLocal`
+15. `StatusDurationSec`
+16. `StatusDurationMin`
 
 `StatusDuration*` заполняется для `LOGIN/STATUS_CHANGE`, когда в логе уже есть следующее событие этой сессии.
 
