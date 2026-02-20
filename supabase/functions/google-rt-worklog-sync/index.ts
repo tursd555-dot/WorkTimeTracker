@@ -28,6 +28,7 @@ type ExportEvent = {
   shift_end_ts: string | null;
   shift_duration_sec: number | null;
   closes_event_id: string | null;
+  closes_event_start_ts: string | null;
   closes_event_end_ts: string | null;
   closes_event_duration_sec: number | null;
 };
@@ -320,6 +321,35 @@ async function getSessionRowMap(
   return map;
 }
 
+async function getSessionStatusStartRowMap(
+  accessToken: string,
+  spreadsheetId: string,
+  sheetName: string,
+): Promise<Map<string, number>> {
+  const range = encodeURIComponent(`'${sheetName}'!E2:K`);
+  const url =
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}?majorDimension=ROWS`;
+
+  const payload = await googleJsonRequest(accessToken, url) as {
+    values?: string[][];
+  };
+
+  const rows = payload.values ?? [];
+  const map = new Map<string, number>();
+  for (let i = 0; i < rows.length; i += 1) {
+    const row = rows[i] ?? [];
+    const sessionId = String(row[0] ?? "").trim(); // col E
+    const statusStartLocal = String(row[6] ?? "").trim(); // col K in E:K slice
+    if (!sessionId || !statusStartLocal) continue;
+
+    const key = `${sessionId}|${statusStartLocal}`;
+    if (!map.has(key)) {
+      map.set(key, i + 2);
+    }
+  }
+  return map;
+}
+
 async function batchUpdateValues(
   accessToken: string,
   spreadsheetId: string,
@@ -411,7 +441,7 @@ function eventToSheetRow(event: ExportEvent, timeZone: string): string[] {
   // как начало/конец статуса с нулевой длительностью.
   if (actionType === "LOGOUT") {
     statusEndLocal = statusStartLocal;
-    statusDuration = "00:00:00";
+    statusDuration = formatDuration(event.shift_duration_sec) || "00:00:00";
   }
 
   return [
@@ -555,6 +585,8 @@ Deno.serve(async (request: Request) => {
 
       // Patch previously exported rows when a new event closes them.
       const closureMap = new Map<string, {
+        sessionId: string;
+        statusStartLocal: string;
         endLocal: string;
         duration: string;
       }>();
@@ -563,8 +595,15 @@ Deno.serve(async (request: Request) => {
         if (!closesId) continue;
         const endUtc = String(event.closes_event_end_ts ?? "").trim();
         if (!endUtc) continue;
+        const sessionId = String(event.session_id ?? "").trim();
+        const statusStartLocal = formatLocalDateTime(
+          event.closes_event_start_ts,
+          timeZone,
+        );
 
         closureMap.set(closesId, {
+          sessionId,
+          statusStartLocal,
           endLocal: formatLocalDateTime(endUtc, timeZone),
           duration: formatDuration(event.closes_event_duration_sec),
         });
@@ -576,10 +615,17 @@ Deno.serve(async (request: Request) => {
           spreadsheetId,
           sheetName,
         );
+        const sessionStatusStartRowMap = await getSessionStatusStartRowMap(
+          googleAccessToken,
+          spreadsheetId,
+          sheetName,
+        );
 
         const updates: Array<{ range: string; values: string[][] }> = [];
         for (const [closedEventId, closure] of closureMap.entries()) {
-          const rowNumber = eventRowMap.get(closedEventId);
+          const fallbackKey = `${closure.sessionId}|${closure.statusStartLocal}`;
+          const rowNumber = eventRowMap.get(closedEventId) ??
+            sessionStatusStartRowMap.get(fallbackKey);
           if (!rowNumber) continue;
           updates.push({
             range: `'${sheetName}'!L${rowNumber}:M${rowNumber}`,

@@ -57,6 +57,7 @@ returns table (
     shift_end_ts timestamptz,
     shift_duration_sec integer,
     closes_event_id uuid,
+    closes_event_start_ts timestamptz,
     closes_event_end_ts timestamptz,
     closes_event_duration_sec integer
 )
@@ -140,6 +141,7 @@ as $$
                 else null
             end as shift_duration_sec,
             prv.prev_id as closes_event_id,
+            prv.prev_ts as closes_event_start_ts,
             b.timestamp as closes_event_end_ts,
             case
                 when prv.prev_ts is not null
@@ -186,7 +188,18 @@ as $$
             on true
         left join lateral (
             select
-                wl_prev.id as prev_id,
+                (
+                    select wcanon.id
+                    from public.work_log wcanon
+                    where lower(wcanon.email) = lower(wl_prev.email)
+                      and coalesce(wcanon.session_id, '') = coalesce(wl_prev.session_id, '')
+                      and upper(coalesce(wcanon.action_type, '')) = upper(coalesce(wl_prev.action_type, ''))
+                      and coalesce(wcanon.status, '') = coalesce(wl_prev.status, '')
+                      and coalesce(wcanon.details, '') = coalesce(wl_prev.details, '')
+                      and wcanon.timestamp = wl_prev.timestamp
+                    order by wcanon.created_at asc, wcanon.id asc
+                    limit 1
+                ) as prev_id,
                 wl_prev.timestamp as prev_ts
             from public.work_log wl_prev
             where lower(wl_prev.email) = lower(b.email)
@@ -231,6 +244,7 @@ as $$
         e.shift_end_ts,
         e.shift_duration_sec,
         e.closes_event_id,
+        e.closes_event_start_ts,
         e.closes_event_end_ts,
         e.closes_event_duration_sec
     from enriched e
