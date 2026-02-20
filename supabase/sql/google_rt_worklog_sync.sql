@@ -174,7 +174,7 @@ as $$
         left join lateral (
             select
                 min(case when upper(coalesce(wl_s.action_type, '')) = 'LOGIN' then wl_s.timestamp end) as shift_start_ts,
-                min(case when upper(coalesce(wl_s.action_type, '')) = 'LOGOUT' then wl_s.timestamp end) as shift_end_ts
+                max(case when upper(coalesce(wl_s.action_type, '')) = 'LOGOUT' then wl_s.timestamp end) as shift_end_ts
             from public.work_log wl_s
             where lower(wl_s.email) = lower(b.email)
               and upper(coalesce(wl_s.action_type, '')) in ('LOGIN', 'LOGOUT')

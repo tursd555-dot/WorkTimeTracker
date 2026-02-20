@@ -398,10 +398,21 @@ function formatDuration(totalSec: number | null | undefined): string {
 }
 
 function eventToSheetRow(event: ExportEvent, timeZone: string): string[] {
+  const actionType = normalizeActionType(event.action_type);
+  const normalizedStatus = normalizeStatus(event.status);
+  const statusStartLocal = formatLocalDateTime(event.event_ts, timeZone);
   const durationSec = event.status_duration_sec ?? null;
-  const statusEndLocal = formatLocalDateTime(event.status_end_ts, timeZone);
+  let statusEndLocal = formatLocalDateTime(event.status_end_ts, timeZone);
+  let statusDuration = formatDuration(durationSec);
   const shiftStartLocal = formatLocalDateTime(event.shift_start_ts, timeZone);
   const shiftEndLocal = formatLocalDateTime(event.shift_end_ts, timeZone);
+
+  // Для явной фиксации логаута в отчете показываем момент логаута
+  // как начало/конец статуса с нулевой длительностью.
+  if (actionType === "LOGOUT") {
+    statusEndLocal = statusStartLocal;
+    statusDuration = "00:00:00";
+  }
 
   return [
     event.event_id ?? "",
@@ -412,11 +423,11 @@ function eventToSheetRow(event: ExportEvent, timeZone: string): string[] {
     shiftStartLocal,
     shiftEndLocal,
     formatDuration(event.shift_duration_sec),
-    normalizeActionType(event.action_type),
-    normalizeStatus(event.status),
-    formatLocalDateTime(event.event_ts, timeZone),
+    actionType,
+    normalizedStatus,
+    statusStartLocal,
     statusEndLocal,
-    formatDuration(durationSec),
+    statusDuration,
     event.comment ?? "",
   ];
 }
@@ -539,12 +550,7 @@ Deno.serve(async (request: Request) => {
         break;
       }
 
-      const rowsToAppend = batch
-        .filter((event) => {
-          const action = normalizeActionType(event.action_type);
-          return action === "LOGIN" || action === "STATUS_CHANGE";
-        })
-        .map((event) => eventToSheetRow(event, timeZone));
+      const rowsToAppend = batch.map((event) => eventToSheetRow(event, timeZone));
       await appendRows(googleAccessToken, spreadsheetId, sheetName, rowsToAppend);
 
       // Patch previously exported rows when a new event closes them.

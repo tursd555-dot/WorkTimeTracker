@@ -130,6 +130,7 @@ supabase functions deploy google-rt-worklog-sync
 14. `Comment`
 
 `StatusEndLocal`/`StatusDuration` заполняются, когда статус завершён следующим событием.
+Событие `LOGOUT` выгружается отдельной строкой (для наглядной фиксации времени выхода).
 
 ---
 
