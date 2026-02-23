@@ -416,6 +416,23 @@ function normalizeStatus(status: string | null | undefined): string {
   return canonical[key] ?? raw;
 }
 
+function resolveComment(
+  event: ExportEvent,
+  actionType: string,
+  normalizedStatus: string,
+): string {
+  const rawComment = String(event.comment ?? "").trim();
+  if (rawComment) return rawComment;
+
+  if (actionType === "LOGIN") return "Начало смены";
+  if (actionType === "LOGOUT") return "Завершение смены";
+  if (actionType === "STATUS_CHANGE" && normalizedStatus) {
+    return `Смена статуса: ${normalizedStatus}`;
+  }
+
+  return "";
+}
+
 function formatDuration(totalSec: number | null | undefined): string {
   if (totalSec === null || totalSec === undefined || !Number.isFinite(totalSec)) {
     return "";
@@ -443,6 +460,7 @@ function eventToSheetRow(event: ExportEvent, timeZone: string): string[] {
     statusEndLocal = statusStartLocal;
     statusDuration = formatDuration(event.shift_duration_sec) || "00:00:00";
   }
+  const resolvedComment = resolveComment(event, actionType, normalizedStatus);
 
   return [
     event.event_id ?? "",
@@ -458,7 +476,7 @@ function eventToSheetRow(event: ExportEvent, timeZone: string): string[] {
     statusStartLocal,
     statusEndLocal,
     statusDuration,
-    event.comment ?? "",
+    resolvedComment,
   ];
 }
 
