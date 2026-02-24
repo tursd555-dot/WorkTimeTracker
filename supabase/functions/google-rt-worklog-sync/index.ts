@@ -419,16 +419,13 @@ function normalizeStatus(status: string | null | undefined): string {
 function resolveComment(
   event: ExportEvent,
   actionType: string,
-  normalizedStatus: string,
+  _normalizedStatus: string,
 ): string {
   const rawComment = String(event.comment ?? "").trim();
   if (rawComment) return rawComment;
 
   if (actionType === "LOGIN") return "Начало смены";
   if (actionType === "LOGOUT") return "Завершение смены";
-  if (actionType === "STATUS_CHANGE" && normalizedStatus) {
-    return `Смена статуса: ${normalizedStatus}`;
-  }
 
   return "";
 }

@@ -1648,12 +1648,12 @@ class SupabaseAPI:
                 logger.info(f"Logged {len(records)} actions for {email}")
                 return True
             except Exception as insert_error:
-                # Ошибки сокета в Windows (WinError 10035) не критичны для работы приложения
+                # Ошибки сети должны оставлять записи в очереди (return False),
+                # чтобы auto_sync повторил отправку после восстановления связи.
                 error_str = str(insert_error)
                 if '10035' in error_str or 'socket' in error_str.lower() or 'ReadError' in str(type(insert_error).__name__):
-                    logger.warning(f"Socket error while logging actions for {email} (non-critical): {insert_error}")
-                    # Возвращаем True, чтобы не блокировать основную функциональность
-                    return True
+                    logger.warning(f"Socket/network error while logging actions for {email}: {insert_error}")
+                    return False
                 else:
                     # Другие ошибки - пробрасываем дальше
                     raise
