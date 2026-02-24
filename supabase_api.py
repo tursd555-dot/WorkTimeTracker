@@ -1500,24 +1500,24 @@ class SupabaseAPI:
         """
         try:
             email_lower = (email or "").strip().lower()
-            response = self.client.table('users')\
-                .select('*')\
-                .eq('email', email_lower)\
-                .execute()
-            
-            if response.data:
-                row = response.data[0]
-                # Возвращаем в формате, совместимом с sheets_api.py
+            if not email_lower:
+                return None
+
+            def _norm(v: Any) -> str:
+                return str(v or "").strip().lower()
+
+            def _to_user_payload(row: Dict[str, Any]) -> Dict[str, str]:
+                normalized_email = _norm(row.get('email')) or email_lower
                 return {
                     # Ключи в нижнем регистре для совместимости с login_window.py
-                    'email': email_lower,
+                    'email': normalized_email,
                     'name': row.get('name', ''),
                     'role': row.get('role', 'специалист'),
                     'shift_hours': row.get('shift_hours', '8 часов'),
                     'telegram_login': row.get('telegram_id', ''),
                     'group': row.get('group_name', ''),
                     # Также возвращаем в формате с заглавными буквами для совместимости
-                    'Email': email_lower,
+                    'Email': normalized_email,
                     'Name': row.get('name', ''),
                     'Phone': row.get('phone', ''),
                     'Role': row.get('role', 'специалист'),
@@ -1526,6 +1526,41 @@ class SupabaseAPI:
                     'ShiftHours': row.get('shift_hours', '8 часов'),
                     'NotifyTelegram': 'Yes' if row.get('notify_telegram') else 'No'
                 }
+
+            # 1) Быстрый точный поиск
+            response = self.client.table('users')\
+                .select('*')\
+                .eq('email', email_lower)\
+                .limit(1)\
+                .execute()
+            if response.data:
+                return _to_user_payload(response.data[0])
+
+            # 2) Case-insensitive exact
+            response = self.client.table('users')\
+                .select('*')\
+                .ilike('email', email_lower)\
+                .limit(10)\
+                .execute()
+            candidates = response.data or []
+
+            # 3) Fallback for dirty data (spaces/extra chars in email column)
+            if not candidates:
+                response = self.client.table('users')\
+                    .select('*')\
+                    .ilike('email', f"%{email_lower}%")\
+                    .limit(50)\
+                    .execute()
+                candidates = response.data or []
+
+            if candidates:
+                exact = [r for r in candidates if _norm(r.get('email')) == email_lower]
+                pool = exact or candidates
+                # Предпочитаем активного пользователя, если поле есть
+                active = [r for r in pool if r.get('is_active') is True]
+                chosen = active[0] if active else pool[0]
+                return _to_user_payload(chosen)
+
             return None
             
         except Exception as e:
