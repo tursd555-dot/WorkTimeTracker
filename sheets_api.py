@@ -111,10 +111,6 @@ class SheetsAPI:
                     if not self._sheet_id:
                         raise RuntimeError("GOOGLE_SHEET_ID не задан в .env")
                     self._init_client()
-            else:
-                # При использовании Supabase credentials не нужны
-                self.credentials_path = None
-                logger.info("Using Supabase - credentials not required, skipping Sheets API initialization")
         except Exception as e:
             logger.critical("Initialization failed", exc_info=True)
             raise SheetsAPIError(
