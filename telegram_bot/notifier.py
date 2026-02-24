@@ -77,6 +77,7 @@ class TelegramNotifier:
         token: Optional[str] = None,
         admin_chat_id: Optional[str] = None,
         broadcast_chat_id: Optional[str] = None,
+        monitoring_chat_id: Optional[str] = None,
         min_interval_sec: Optional[int] = None,
         default_silent: Optional[bool] = None,
     ):
@@ -103,7 +104,8 @@ class TelegramNotifier:
         ).strip()
         
         self.monitoring_chat = str(
-            os.getenv("TELEGRAM_MONITORING_CHAT_ID", "")
+            monitoring_chat_id
+            or os.getenv("TELEGRAM_MONITORING_CHAT_ID", "")
             or (CFG_TELEGRAM_MONITORING_CHAT_ID or "")
         ).strip()
         
@@ -253,22 +255,44 @@ class TelegramNotifier:
             return self._links_cache
         try:
             api = self._sheets_api()
-            ws = api.get_worksheet(USERS_SHEET)
-            header = api._request_with_retry(ws.row_values, 1) or []
-            values = api._request_with_retry(ws.get_all_values) or []
-            lh = [str(h or "").strip().lower() for h in header]
-            ix_email = lh.index("email") if "email" in lh else None
-            ix_tg = None
-            for name in ("telegram", "telegramchatid", "tg"):
-                if name in lh:
-                    ix_tg = lh.index(name); break
             cache: Dict[str, str] = {}
-            if ix_email is not None and ix_tg is not None:
-                for r in values[1:]:
-                    e = (r[ix_email] if ix_email < len(r) else "").strip().lower()
-                    c = (r[ix_tg] if ix_tg < len(r) else "").strip()
-                    if e and c:
-                        cache[e] = c
+
+            # В режиме Supabase надежнее брать пользователей через API-метод get_users().
+            if hasattr(api, "get_users"):
+                try:
+                    users = api.get_users() or []
+                    for row in users:
+                        e = str(row.get("Email") or row.get("email") or "").strip().lower()
+                        c = str(
+                            row.get("Telegram")
+                            or row.get("telegram_id")
+                            or row.get("telegram")
+                            or row.get("tg")
+                            or ""
+                        ).strip()
+                        if e and c:
+                            cache[e] = c
+                except Exception as e:
+                    log.debug("Не удалось загрузить Telegram links через get_users(): %s", e)
+
+            # Fallback для старого Google Sheets пути (через worksheet методы).
+            if not cache:
+                ws = api.get_worksheet(USERS_SHEET)
+                header = api._request_with_retry(ws.row_values, 1) or []
+                values = api._request_with_retry(ws.get_all_values) or []
+                lh = [str(h or "").strip().lower() for h in header]
+                ix_email = lh.index("email") if "email" in lh else None
+                ix_tg = None
+                for name in ("telegram", "telegramchatid", "tg"):
+                    if name in lh:
+                        ix_tg = lh.index(name)
+                        break
+                if ix_email is not None and ix_tg is not None:
+                    for r in values[1:]:
+                        e = (r[ix_email] if ix_email < len(r) else "").strip().lower()
+                        c = (r[ix_tg] if ix_tg < len(r) else "").strip()
+                        if e and c:
+                            cache[e] = c
             self._links_cache, self._links_ts = cache, time.monotonic()
         except Exception as e:
             log.error("Не удалось загрузить Users -> Telegram: %s", e)
@@ -277,6 +301,9 @@ class TelegramNotifier:
     def _audit(self, kind: str, target: str, text: str, ok: bool, err: Optional[str]) -> None:
         try:
             api = self._sheets_api()
+            # В режиме Supabase `client.open` отсутствует; аудит в лист не ведем.
+            if not hasattr(api, "client") or not hasattr(api.client, "open"):
+                return
             ss = api.client.open(GOOGLE_SHEET_NAME)
             titles = [w.title for w in ss.worksheets()]
             if NOTIFICATIONS_LOG_SHEET not in titles:

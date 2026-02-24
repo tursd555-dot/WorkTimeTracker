@@ -21,7 +21,7 @@ MODE = os.getenv("BOT_MODE", "linker")  # linker или monitor
 import logging, re, time, requests
 from typing import Optional
 from config import GOOGLE_SHEET_NAME, USERS_SHEET, TELEGRAM_BOT_TOKEN as CFG_TELEGRAM_BOT_TOKEN
-from api_adapter import SheetsAPI
+from api_adapter import SheetsAPI, USE_BACKEND
 
 # --- Единое логирование для телеграм бота ---
 from logging_setup import setup_logging
@@ -66,6 +66,15 @@ def _num_to_col(n: int) -> str:
 
 def _set_user_telegram(email: str, chat_id: int | str) -> bool:
     api = SheetsAPI()
+
+    # Supabase-режим: обновляем users.telegram_id напрямую через API-слой.
+    if USE_BACKEND == "supabase" and hasattr(api, "get_user_by_email") and hasattr(api, "update_user_fields"):
+        user = api.get_user_by_email(email)
+        if not user:
+            return False
+        api.update_user_fields(email, {"Telegram": str(chat_id), "NotifyTelegram": "Yes"})
+        return True
+
     ws = api.client.open(GOOGLE_SHEET_NAME).worksheet(USERS_SHEET)
     header = api._request_with_retry(ws.row_values, 1) or []
     values = api._request_with_retry(ws.get_all_values) or []

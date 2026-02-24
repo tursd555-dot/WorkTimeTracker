@@ -31,16 +31,18 @@ _group_notifications_sent: Dict[str, Dict[str, bool]] = defaultdict(dict)
 
 
 def check_internet_available() -> bool:
-    """Быстрая проверка доступности интернета"""
+    """Быстрая проверка доступности Telegram API (а не Google Sheets)."""
+    import socket
+    old_timeout = socket.getdefaulttimeout()
     try:
-        import socket
-        socket.setdefaulttimeout(0.5)
-        addr_info = socket.getaddrinfo('sheets.googleapis.com', 443, socket.AF_INET, socket.SOCK_STREAM)
-        socket.setdefaulttimeout(None)
+        socket.setdefaulttimeout(1.0)
+        # Для Telegram-уведомлений важна доступность api.telegram.org.
+        addr_info = socket.getaddrinfo('api.telegram.org', 443, socket.AF_UNSPEC, socket.SOCK_STREAM)
         return bool(addr_info)
     except Exception:
-        socket.setdefaulttimeout(None)
         return False
+    finally:
+        socket.setdefaulttimeout(old_timeout)
 
 
 def async_notification(func):
