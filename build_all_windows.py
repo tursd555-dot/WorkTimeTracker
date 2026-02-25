@@ -51,6 +51,46 @@ APP_USER = "WorkTimeTracker_User"
 APP_BOT = "WorkTimeTracker_Bot"
 
 
+def _add_python_runtime_binaries(options: List[str], logger_obj: logging.Logger) -> None:
+    """
+    Добавляет критичные runtime DLL в сборку Windows.
+    Это снижает риск ошибок вида:
+    "Failed to load Python DLL ... LoadLibrary: The specified module could not be found".
+    """
+    if os.name != "nt":
+        return
+
+    py_ver = f"python{sys.version_info.major}{sys.version_info.minor}.dll"
+    wanted_names = {
+        py_ver,
+        "python3.dll",
+        "vcruntime140.dll",
+        "vcruntime140_1.dll",
+        "msvcp140.dll",
+    }
+
+    search_dirs = [
+        Path(sys.executable).resolve().parent,   # venv\Scripts
+        Path(sys.base_prefix),                   # base python dir
+        Path(sys.base_prefix) / "DLLs",          # base python DLLs
+    ]
+
+    added: set[str] = set()
+    for d in search_dirs:
+        if not d.exists():
+            continue
+        for name in wanted_names:
+            p = (d / name).resolve()
+            if p.exists() and str(p) not in added:
+                options.extend(["--add-binary", f"{p};."])
+                added.add(str(p))
+
+    if added:
+        logger_obj.info("✓ Added Windows runtime binaries: %s", ", ".join(sorted(Path(x).name for x in added)))
+    else:
+        logger_obj.warning("⚠ Windows runtime DLLs were not found explicitly; target PC may require VC++ runtime")
+
+
 def check_requirements() -> bool:
     """Проверка наличия необходимых файлов и зависимостей"""
     logger.info("🔍 Проверка требований...")
@@ -59,6 +99,13 @@ def check_requirements() -> bool:
     try:
         import PyInstaller
         logger.info(f"✓ PyInstaller {PyInstaller.__version__}")
+        if sys.version_info >= (3, 14):
+            logger.warning(
+                "⚠ Сборка выполняется на Python %d.%d. "
+                "Для максимальной совместимости рекомендуем Python 3.12.",
+                sys.version_info.major,
+                sys.version_info.minor,
+            )
     except ImportError:
         logger.error("❌ PyInstaller не установлен! Установите: pip install pyinstaller")
         return False
@@ -203,6 +250,9 @@ def build_bot() -> bool:
             options.append(f'--icon={icon_file}')
         else:
             logger.warning(f"⚠ Иконка не найдена: {icon_file}")
+
+        # Добавляем runtime DLL для переносимости на "чистые" Windows-машины
+        _add_python_runtime_binaries(options, logger)
         
         # Добавляем данные
         data_files = [

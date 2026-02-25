@@ -17,6 +17,41 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+def _add_python_runtime_binaries(options):
+    """Добавляет runtime DLL для надежного запуска на другом ПК (Windows)."""
+    if os.name != "nt":
+        return
+
+    py_ver = f"python{sys.version_info.major}{sys.version_info.minor}.dll"
+    wanted = {
+        py_ver,
+        "python3.dll",
+        "vcruntime140.dll",
+        "vcruntime140_1.dll",
+        "msvcp140.dll",
+    }
+
+    search_dirs = [
+        Path(sys.executable).resolve().parent,
+        Path(sys.base_prefix),
+        Path(sys.base_prefix) / "DLLs",
+    ]
+
+    added = set()
+    for d in search_dirs:
+        if not d.exists():
+            continue
+        for name in wanted:
+            p = (d / name).resolve()
+            if p.exists() and str(p) not in added:
+                options.extend(["--add-binary", f"{p};."])
+                added.add(str(p))
+
+    if added:
+        logger.info("✓ Добавлены runtime DLL: %s", ", ".join(sorted(Path(x).name for x in added)))
+    else:
+        logger.warning("⚠ Runtime DLL не найдены явно (на целевой машине может потребоваться VC++ runtime)")
+
 def main():
     try:
         logger.info("🚀 Сборка Telegram бота...")
@@ -57,6 +92,9 @@ def main():
             options.append(f'--icon={icon_file}')
         else:
             logger.warning(f"⚠ Иконка не найдена: {icon_file}")
+
+        # Критично для переносимости: добавляем python/vcruntime DLL
+        _add_python_runtime_binaries(options)
         
         # Добавляем данные
         data_files = [
