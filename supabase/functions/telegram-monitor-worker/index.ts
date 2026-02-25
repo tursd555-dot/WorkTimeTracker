@@ -132,7 +132,7 @@ function buildViolationMessage(v: ViolationRow, timeZone: string): string {
   };
 
   const t = String(v.violation_type ?? "").trim();
-  const localizedType = violationNameMap[t] ?? t || "Нарушение";
+  const localizedType = violationNameMap[t] ?? (t || "Нарушение");
   const when = formatLocalDateTime(v.timestamp, timeZone);
   const who = (v.name || "").trim() || v.email || "Unknown";
   const breakType = normalizeBreakType(v.break_type);
