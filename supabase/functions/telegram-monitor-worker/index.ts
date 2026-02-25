@@ -304,6 +304,12 @@ Deno.serve(async (request: Request) => {
       1,
       90,
     );
+    const breakMaxAgeHours = parseBoundedInt(
+      Deno.env.get("TELEGRAM_BREAK_MAX_AGE_HOURS"),
+      12,
+      1,
+      168,
+    );
 
     const supabase = createClient(supabaseUrl, supabaseServiceRoleKey, {
       auth: { persistSession: false },
@@ -408,11 +414,34 @@ Deno.serve(async (request: Request) => {
       }
     }
 
+    // Active session emails: break warnings are relevant only for operators
+    // that are currently in an active session.
+    const { data: activeSessionsRows, error: activeSessionsError } = await supabase
+      .from("work_sessions")
+      .select("email,status")
+      .in("status", ["active", "Active"])
+      .limit(5000);
+
+    if (activeSessionsError) {
+      throw new Error(`Failed to load active sessions: ${activeSessionsError.message}`);
+    }
+
+    const activeSessionEmails = new Set<string>();
+    for (const row of (activeSessionsRows ?? []) as Array<{ email?: string | null }>) {
+      const email = String(row.email ?? "").trim().toLowerCase();
+      if (email) activeSessionEmails.add(email);
+    }
+
+    const breakScanFromIso = new Date(Date.now() - breakMaxAgeHours * 60 * 60 * 1000)
+      .toISOString();
+
     // Active breaks over limit: one alert per break instance.
+    // We scan only recent records to avoid stale orphaned breaks.
     const { data: breakRows, error: breaksError } = await supabase
       .from("break_log")
       .select("id,email,name,break_type,start_time,end_time,status,session_id")
       .is("end_time", null)
+      .gte("start_time", breakScanFromIso)
       .order("start_time", { ascending: true })
       .limit(1000);
 
@@ -421,7 +450,22 @@ Deno.serve(async (request: Request) => {
     }
 
     const nowMs = Date.now();
+    let skippedInactiveSession = 0;
+    let skippedNonActiveStatus = 0;
     for (const row of (breakRows ?? []) as BreakRow[]) {
+      const status = String(row.status ?? "").trim().toLowerCase();
+      if (status && status !== "active") {
+        skippedNonActiveStatus += 1;
+        continue;
+      }
+
+      const normalizedEmail = String(row.email ?? "").trim().toLowerCase();
+      if (!normalizedEmail) continue;
+      if (!activeSessionEmails.has(normalizedEmail)) {
+        skippedInactiveSession += 1;
+        continue;
+      }
+
       const startedMs = parseIsoToMs(row.start_time);
       if (startedMs === null) continue;
 
@@ -482,6 +526,13 @@ Deno.serve(async (request: Request) => {
         violations: sentViolations,
         break_warnings: sentBreakWarnings,
         total: totalNewSent,
+      },
+      break_scan: {
+        window_hours: breakMaxAgeHours,
+        active_session_emails: activeSessionEmails.size,
+        candidates: (breakRows ?? []).length,
+        skipped_inactive_session: skippedInactiveSession,
+        skipped_non_active_status: skippedNonActiveStatus,
       },
       loops,
       batch_size: batchSize,

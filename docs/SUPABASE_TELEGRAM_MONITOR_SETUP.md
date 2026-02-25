@@ -71,6 +71,7 @@ Optional tuning:
 - `BREAK_LIMIT_MINUTES=15`
 - `LUNCH_LIMIT_MINUTES=60`
 - `TELEGRAM_SENT_KEEP_DAYS=7`
+- `TELEGRAM_BREAK_MAX_AGE_HOURS=12`  (scan only recent active breaks to avoid stale records)
 
 ---
 
