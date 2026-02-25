@@ -3,7 +3,6 @@ import sys
 import os
 import subprocess
 import threading
-import shutil
 from pathlib import Path
 from datetime import datetime
 from PyQt5.QtWidgets import (
@@ -23,6 +22,34 @@ def write_to_logfile(message: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(f"[{timestamp}] {message}\n")
+
+
+def run_worker_mode(mode: str) -> int:
+    """
+    Режим дочернего воркера бота.
+    Важно для собранного exe: не требует установленного system python.
+    """
+    mode = (mode or os.getenv("BOT_MODE", "linker")).strip().lower()
+    if mode not in ("linker", "monitor"):
+        mode = "linker"
+
+    base_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+    try:
+        os.chdir(str(base_dir))
+    except Exception:
+        pass
+
+    os.environ["BOT_MODE"] = mode
+    print(f"[worker] mode={mode}, cwd={os.getcwd()}", flush=True)
+    write_to_logfile(f"[worker] mode={mode}, cwd={os.getcwd()}")
+
+    if mode == "monitor":
+        from telegram_bot.monitor_bot import main as bot_main
+    else:
+        from telegram_bot.main import main as bot_main
+
+    bot_main()
+    return 0
 
 
 class LogReaderThread(QThread):
@@ -133,61 +160,27 @@ class BotLauncher(QWidget):
             self.status_label.setText("🟡 Запуск бота...")
             self.status_label.setStyleSheet("color: orange; font-weight: bold; font-size: 16px;")
 
-            # --- Исправление: правильный запуск из exe ---
             if getattr(sys, "frozen", False):
-                # Если запущен из собранного exe
-                exe_dir = Path(sys.executable).parent
-                _internal_dir = exe_dir / "_internal"
-                
-                # Проверяем, есть ли telegram_bot в _internal
-                internal_bot = _internal_dir / "telegram_bot" / "main.py"
-                
-                if internal_bot.exists():
-                    # Модуль найден в _internal - запускаем через python
-                    # Ищем python в системе или используем тот, что был при сборке
-                    system_python = shutil.which("python") or shutil.which("python3") or "python"
-                    cmd = [system_python, str(internal_bot)]
-                    cwd = str(_internal_dir.parent)  # Директория с exe
-                else:
-                    # Модуль не найден - пытаемся найти в исходниках проекта
-                    # (если exe запущен из директории проекта)
-                    project_root = Path(__file__).parent if hasattr(sys, '_MEIPASS') else Path.cwd()
-                    bot_script = project_root / "telegram_bot" / "main.py"
-                    
-                    if bot_script.exists():
-                        system_python = shutil.which("python") or shutil.which("python3") or "python"
-                        cmd = [system_python, str(bot_script)]
-                        cwd = str(project_root)
-                    else:
-                        # Последняя попытка - запустить через -m (если модуль в PYTHONPATH)
-                        system_python = shutil.which("python") or shutil.which("python3") or "python"
-                        cmd = [system_python, "-m", "telegram_bot.main"]
-                        cwd = str(exe_dir)
+                # Критично: в собранном приложении запускаем worker через этот же exe,
+                # чтобы не зависеть от установленного в системе python (ошибка 9009).
+                exe_path = str(Path(sys.executable))
+                cmd = [exe_path, "--worker", "--mode", self.mode]
+                cwd = str(Path(sys.executable).parent)
             else:
-                # Если запущен из исходников — используем текущий интерпретатор
+                # Режим исходников: запускаем скрипт текущим интерпретатором.
                 bot_script = Path(__file__).parent / "telegram_bot" / "main.py"
-                cmd = [sys.executable, str(bot_script)]
+                if bot_script.exists():
+                    cmd = [sys.executable, str(bot_script)]
+                else:
+                    cmd = [sys.executable, "-m", "telegram_bot.main"]
+                if self.mode == "monitor":
+                    cmd.append("--monitor")
                 cwd = str(Path(__file__).parent)
-            
-            # Добавляем флаг режима
-            if self.mode == "monitor":
-                cmd.append("--monitor")
             
             # Важно: устанавливаем переменную окружения для режима
             env = os.environ.copy()
             env["BOT_MODE"] = self.mode
             
-            # Добавляем путь к _internal в PYTHONPATH для exe
-            if getattr(sys, "frozen", False):
-                exe_dir = Path(sys.executable).parent
-                _internal_dir = exe_dir / "_internal"
-                if _internal_dir.exists():
-                    pythonpath = env.get("PYTHONPATH", "")
-                    if pythonpath:
-                        env["PYTHONPATH"] = f"{str(_internal_dir)}{os.pathsep}{pythonpath}"
-                    else:
-                        env["PYTHONPATH"] = str(_internal_dir)
-
             # важно: cwd = корень проекта, чтобы импортировался config.py
             self.process = subprocess.Popen(
                 cmd,
@@ -249,10 +242,15 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description='WorkTimeTracker Bot Launcher')
     parser.add_argument('--monitor', action='store_true', help='Запустить Monitor Bot (24/7) вместо Linker Bot')
+    parser.add_argument('--worker', action='store_true', help='Внутренний режим: запуск bot worker без GUI')
+    parser.add_argument('--mode', choices=['linker', 'monitor'], help='Режим worker-процесса')
     args = parser.parse_args()
     
+    if args.worker:
+        worker_mode = args.mode or ("monitor" if args.monitor else os.getenv("BOT_MODE", "linker"))
+        sys.exit(run_worker_mode(worker_mode))
+
     mode = "monitor" if args.monitor else "linker"
-    
     app = QApplication(sys.argv)
     win = BotLauncher(mode=mode)
     win.show()
