@@ -94,7 +94,7 @@ class LogReaderThread(QThread):
 
 
 class BotLauncher(QWidget):
-    def __init__(self, mode="linker"):
+    def __init__(self, mode="monitor"):
         super().__init__()
         self.mode = mode  # "linker" или "monitor"
         mode_name = "Linker Bot" if mode == "linker" else "Monitor Bot (24/7)"
@@ -209,6 +209,10 @@ class BotLauncher(QWidget):
             self.status_label.setText("🟢 Бот запущен")
             self.status_label.setStyleSheet("color: #00ff00; font-weight: bold; font-size: 16px;")
             self._append_log("✅ Бот успешно запущен.")
+            if self.mode == "linker":
+                self._append_log("ℹ️ Linker mode: привязка email к Telegram. Уведомления мониторинга в этом режиме не отправляются.")
+            else:
+                self._append_log("ℹ️ Monitor mode: активен мониторинг нарушений и отправка уведомлений.")
         except Exception as e:
             msg = f"❌ Ошибка запуска: {e}"
             self._append_log(msg)
@@ -250,16 +254,35 @@ if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description='WorkTimeTracker Bot Launcher')
-    parser.add_argument('--monitor', action='store_true', help='Запустить Monitor Bot (24/7) вместо Linker Bot')
+    parser.add_argument('--monitor', action='store_true', help='Запустить Monitor Bot (24/7)')
+    parser.add_argument('--linker', action='store_true', help='Запустить Linker Bot (привязка email -> chat_id)')
     parser.add_argument('--worker', action='store_true', help='Внутренний режим: запуск bot worker без GUI')
     parser.add_argument('--mode', choices=['linker', 'monitor'], help='Режим worker-процесса')
     args = parser.parse_args()
+
+    env_mode = (os.getenv("BOT_MODE", "monitor") or "monitor").strip().lower()
+    if env_mode not in ("linker", "monitor"):
+        env_mode = "monitor"
     
     if args.worker:
-        worker_mode = args.mode or ("monitor" if args.monitor else os.getenv("BOT_MODE", "linker"))
+        if args.mode:
+            worker_mode = args.mode
+        elif args.monitor:
+            worker_mode = "monitor"
+        elif args.linker:
+            worker_mode = "linker"
+        else:
+            worker_mode = env_mode
         sys.exit(run_worker_mode(worker_mode))
 
-    mode = "monitor" if args.monitor else "linker"
+    if args.monitor:
+        mode = "monitor"
+    elif args.linker:
+        mode = "linker"
+    else:
+        # По умолчанию запускаем monitor, т.к. это режим уведомлений.
+        mode = env_mode
+
     app = QApplication(sys.argv)
     win = BotLauncher(mode=mode)
     win.show()
