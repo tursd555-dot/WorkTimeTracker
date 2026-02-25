@@ -73,6 +73,7 @@ python build_all_windows.py --bot
 
 - `BUILD_WINDOWS.md` - Инструкция по сборке приложений для Windows
 - `docs/GOOGLE_REALTIME_REPORTS_SETUP.md` - Realtime выгрузка в Google Sheets (через Supabase, без сервера)
+- `docs/SUPABASE_KEEPALIVE_SETUP.md` - Keepalive для Supabase (healthz + внешний cron-пинг)
 - `INTEGRATION_GUIDE.md` - How improvements are integrated
 - `CHANGES_MAP.md` - What was changed in code
 - `docs/` - Additional documentation

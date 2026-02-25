@@ -1,0 +1,55 @@
+name: Supabase Keepalive
+
+on:
+  schedule:
+    # Daily ping to keep project active.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping-healthz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SUPABASE_PROJECT_URL: ${{ secrets.SUPABASE_PROJECT_URL }}
+      SYNC_WEBHOOK_SECRET: ${{ secrets.SYNC_WEBHOOK_SECRET }}
+    steps:
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUPABASE_PROJECT_URL}" ]]; then
+            echo "Missing secret: SUPABASE_PROJECT_URL"
+            exit 1
+          fi
+          if [[ -z "${SYNC_WEBHOOK_SECRET}" ]]; then
+            echo "Missing secret: SYNC_WEBHOOK_SECRET"
+            exit 1
+          fi
+
+      - name: Ping Supabase healthz endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENDPOINT="${SUPABASE_PROJECT_URL%/}/functions/v1/healthz"
+          echo "Pinging ${ENDPOINT}"
+          curl --silent --show-error --fail-with-body \
+            --retry 4 --retry-delay 5 --retry-all-errors \
+            --request POST \
+            --header "Content-Type: application/json" \
+            --header "x-sync-secret: ${SYNC_WEBHOOK_SECRET}" \
+            --data "{}" \
+            "${ENDPOINT}" | tee keepalive-response.json
+
+      - name: Verify response has ok=true
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! grep -q '"ok"[[:space:]]*:[[:space:]]*true' keepalive-response.json; then
+            echo "Unexpected response:"
+            cat keepalive-response.json
+            exit 1
+          fi

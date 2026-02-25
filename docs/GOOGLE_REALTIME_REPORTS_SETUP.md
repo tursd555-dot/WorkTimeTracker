@@ -159,6 +159,23 @@ supabase functions deploy google-rt-worklog-sync
 
 ---
 
+## Keepalive (чтобы проект не засыпал)
+
+Добавлен отдельный endpoint:
+
+- `POST /functions/v1/healthz`
+- заголовок: `x-sync-secret: <SYNC_WEBHOOK_SECRET>`
+
+И готовый GitHub workflow:
+
+- `.github/workflows/supabase-keepalive.yml` (ежедневный ping + ручной запуск)
+
+Подробные шаги:
+
+- `docs/SUPABASE_KEEPALIVE_SETUP.md`
+
+---
+
 ## Если хотите следующим шагом
 
 Легко расширяется до:
