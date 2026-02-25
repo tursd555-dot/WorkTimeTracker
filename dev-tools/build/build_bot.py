@@ -4,6 +4,7 @@ import os
 import sys
 import logging
 import shutil
+import time
 from pathlib import Path
 from PyInstaller.__main__ import run
 
@@ -16,6 +17,42 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
+
+def _safe_rmtree(path: Path, retries: int = 6, base_delay_sec: float = 0.8) -> bool:
+    """Удаляет директорию с ретраями (для WinError 5 на locked файлах)."""
+    if not path.exists():
+        return True
+    for attempt in range(1, retries + 1):
+        try:
+            shutil.rmtree(path)
+            return True
+        except Exception as e:
+            if attempt >= retries:
+                logger.warning("⚠ Не удалось удалить %s после %d попыток: %s", path, retries, e)
+                return False
+            sleep_s = base_delay_sec * attempt
+            logger.warning("⚠ Попытка %d/%d удалить %s не удалась: %s. Повтор через %.1fs",
+                           attempt, retries, path, e, sleep_s)
+            time.sleep(sleep_s)
+    return False
+
+
+def _kill_stale_bot_processes(app_name: str) -> None:
+    """Пытается завершить старый процесс бота перед сборкой."""
+    if os.name != "nt":
+        return
+    try:
+        import subprocess
+        subprocess.run(
+            ["taskkill", "/F", "/IM", f"{app_name}.exe"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        pass
+
 
 def _add_python_runtime_binaries(options):
     """Добавляет runtime DLL для надежного запуска на другом ПК (Windows)."""
@@ -64,12 +101,15 @@ def main():
         
         # Переходим в корень проекта
         os.chdir(str(project_root))
+
+        # Снимаем lock со старого exe/файлов в dist.
+        _kill_stale_bot_processes(app_name)
         
-        # Очистка только build директории (dist очищается в build_all_windows.py)
+        # Очистка только build директории (dist обычно чистится в build_all_windows.py)
         build_dir = Path('build')
         if build_dir.exists():
-            shutil.rmtree(build_dir)
-            logger.info(f"🧹 Очищена директория: {build_dir}")
+            _safe_rmtree(build_dir)
+            logger.info("🧹 Очищена директория: %s", build_dir)
         
         # Проверка существования файлов
         if not main_script.exists():
@@ -86,6 +126,18 @@ def main():
             '--log-level=WARN',
             '--paths=.',
         ]
+
+        dist_root = project_root / "dist"
+        target_app_dir = dist_root / app_name
+        if target_app_dir.exists() and not _safe_rmtree(target_app_dir):
+            dist_root = project_root / "dist_fallback"
+            _safe_rmtree(dist_root / app_name)
+            options.extend(['--distpath', str(dist_root)])
+            logger.warning(
+                "⚠ Каталог %s заблокирован, используем fallback path: %s",
+                target_app_dir,
+                dist_root,
+            )
         
         # Добавляем иконку, если существует
         if icon_file.exists():
@@ -158,7 +210,7 @@ def main():
         logger.debug(f"Опции: {' '.join(options)}")
         run(options)
         
-        exe_path = Path('dist') / app_name / f"{app_name}.exe"
+        exe_path = dist_root / app_name / f"{app_name}.exe"
         if exe_path.exists():
             logger.info(f"✅ Успех! {exe_path}")
         else:
