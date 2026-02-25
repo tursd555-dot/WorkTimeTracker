@@ -17,6 +17,30 @@ from typing import Dict, Generator, List, Optional, Set, Union
 import pyzipper
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+def _safe_console_print(message: str) -> None:
+    """
+    Безопасная печать для Windows-консолей с не-UTF8 кодировкой (например CP1251).
+    Не допускает падения импорта модуля из-за UnicodeEncodeError.
+    """
+    text = str(message)
+    try:
+        print(text)
+        return
+    except UnicodeEncodeError:
+        pass
+
+    try:
+        stream = getattr(sys, "stdout", None)
+        encoding = (getattr(stream, "encoding", None) or "utf-8")
+        safe_text = text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+        print(safe_text)
+    except Exception:
+        try:
+            print(text.encode("ascii", errors="replace").decode("ascii"))
+        except Exception:
+            # В крайнем случае молча пропускаем, чтобы не ронять импорт config.py.
+            pass
+
 # ============================================================================
 # ПЕРЕКЛЮЧЕНИЕ НА SUPABASE (v20.5)
 # ============================================================================
@@ -38,7 +62,7 @@ if USE_SUPABASE:
     
     SheetsAPI = type('SheetsAPI', (), {'__init__': lambda self: get_supabase_api()})
 
-print(f"✅ Использование: {'Supabase' if USE_SUPABASE else 'Google Sheets'}")
+_safe_console_print(f"Использование: {'Supabase' if USE_SUPABASE else 'Google Sheets'}")
 # ============================================================================
 
 # ==================== Загрузка переменных окружения из .env ====================
@@ -449,12 +473,12 @@ def should_retry_sync(error: Exception) -> bool:
 # ==================== Инициализация конфигурации ====================
 try:
     validate_config()
-    print("✓ Конфигурация успешно проверена")
-    print(f"✓ Стратегия повторных попыток: {SYNC_RETRY_STRATEGY}")
-    print(f"✓ Мониторинг chat ID: {TELEGRAM_MONITORING_CHAT_ID}")
-    print(f"✓ Лимиты: Перерыв={BREAK_LIMIT_MINUTES}мин, Обед={LUNCH_LIMIT_MINUTES}мин")
+    _safe_console_print("Конфигурация успешно проверена")
+    _safe_console_print(f"Стратегия повторных попыток: {SYNC_RETRY_STRATEGY}")
+    _safe_console_print(f"Мониторинг chat ID: {TELEGRAM_MONITORING_CHAT_ID}")
+    _safe_console_print(f"Лимиты: Перерыв={BREAK_LIMIT_MINUTES}мин, Обед={LUNCH_LIMIT_MINUTES}мин")
 except Exception as e:
-    print(f"✗ Ошибка конфигурации: {e}")
+    _safe_console_print(f"Ошибка конфигурации: {e}")
     raise
 
 # ==================== Утилиты для PyInstaller ====================

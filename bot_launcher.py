@@ -33,6 +33,15 @@ def run_worker_mode(mode: str) -> int:
     if mode not in ("linker", "monitor"):
         mode = "linker"
 
+    # На Windows CP1251 часто не умеет emoji/символы; не даем процессу
+    # падать из-за UnicodeEncodeError в print/logging.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(errors="replace")
+        except Exception:
+            pass
+
     base_dir = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
     try:
         os.chdir(str(base_dir))
