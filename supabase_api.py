@@ -19,6 +19,46 @@ except ImportError:
 
 __all__ = ["SupabaseAPI", "get_supabase_api"]
 
+_LOCAL_TZ = datetime.now().astimezone().tzinfo or timezone.utc
+
+
+def _to_utc_iso(value: Any, *, fallback_now: bool = False) -> Optional[str]:
+    """
+    Преобразует строку времени в UTC ISO-8601.
+
+    Важно: если вход без timezone (naive), трактуем как ЛОКАЛЬНОЕ время
+    машины и переводим в UTC. Это предотвращает смещение +3ч для Москвы.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return datetime.now(timezone.utc).isoformat() if fallback_now else None
+
+    dt: Optional[datetime] = None
+
+    # 1) ISO/почти ISO
+    normalized = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        dt = None
+
+    # 2) Явные форматы "YYYY-MM-DD HH:MM[:SS]" / "YYYY-MM-DD"
+    if dt is None:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                dt = datetime.strptime(raw, fmt)
+                break
+            except ValueError:
+                continue
+
+    if dt is None:
+        return datetime.now(timezone.utc).isoformat() if fallback_now else None
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_LOCAL_TZ)
+
+    return dt.astimezone(timezone.utc).isoformat()
+
 
 @dataclass
 class SupabaseConfig:
@@ -482,7 +522,6 @@ class SupabaseAPI:
                 # Формат из break_manager._log_break_start: Email, Name, BreakType, StartTime, EndTime, Duration, Date, Status
                 if len(values) >= 8:
                     try:
-                        from datetime import datetime
                         email_val = str(values[0]).lower() if values[0] else None
                         name_val = str(values[1]) if len(values) > 1 and values[1] else None
                         break_type_val = str(values[2]) if len(values) > 2 and values[2] else None
@@ -496,35 +535,16 @@ class SupabaseAPI:
                             logger.error(f"Missing required fields for break_log: email={email_val}, break_type={break_type_val}, start_time={start_time_str}")
                             return False
                         
-                        # Преобразуем start_time в ISO формат с timezone
-                        try:
-                            # Пробуем разные форматы времени
-                            if 'T' in start_time_str or '+' in start_time_str or start_time_str.endswith('Z'):
-                                # Уже в ISO формате
-                                start_time_iso = start_time_str
-                            else:
-                                # Формат "YYYY-MM-DD HH:MM:SS" -> преобразуем в ISO
-                                dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
-                                start_time_iso = dt.isoformat() + "Z"
-                        except ValueError:
-                            try:
-                                dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M")
-                                start_time_iso = dt.isoformat() + "Z"
-                            except ValueError:
-                                logger.error(f"Invalid start_time format: {start_time_str}")
-                                return False
+                        # Приводим время к UTC ISO. Наивные значения считаем локальными.
+                        start_time_iso = _to_utc_iso(start_time_str)
+                        if not start_time_iso:
+                            logger.error(f"Invalid start_time format: {start_time_str}")
+                            return False
                         
                         # Преобразуем end_time если есть (НЕ добавляем если пусто!)
                         end_time_iso = None
                         if end_time_str and end_time_str.strip() and end_time_str.strip() != "":
-                            try:
-                                if 'T' in end_time_str or '+' in end_time_str or end_time_str.endswith('Z'):
-                                    end_time_iso = end_time_str
-                                else:
-                                    dt = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M:%S")
-                                    end_time_iso = dt.isoformat() + "Z"
-                            except ValueError:
-                                pass
+                            end_time_iso = _to_utc_iso(end_time_str)
                         
                         # Преобразуем duration (НЕ добавляем если пусто!)
                         duration_minutes = None
@@ -581,18 +601,8 @@ class SupabaseAPI:
                         logger.error(f"Missing required fields for violation: email={email_val}, violation_type={violation_type}")
                         return False
                     
-                    # Преобразуем timestamp в формат ISO, если нужно
-                    if timestamp:
-                        if len(timestamp) == 19:  # Формат "YYYY-MM-DD HH:MM:SS"
-                            timestamp_iso = timestamp.replace(" ", "T") + "+00:00"
-                        elif len(timestamp) == 10:  # Формат "YYYY-MM-DD"
-                            timestamp_iso = timestamp + "T00:00:00+00:00"
-                        else:
-                            timestamp_iso = timestamp
-                    else:
-                        # Если timestamp не указан, используем текущее время
-                        from datetime import datetime
-                        timestamp_iso = datetime.now().isoformat() + "+00:00"
+                    # Приводим timestamp к UTC ISO. Наивные значения считаем локальными.
+                    timestamp_iso = _to_utc_iso(timestamp, fallback_now=True)
                     
                     # Извлекаем дату из timestamp
                     violation_date = timestamp_iso[:10] if timestamp_iso else datetime.now().date().isoformat()

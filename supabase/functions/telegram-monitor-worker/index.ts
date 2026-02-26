@@ -17,6 +17,7 @@ type ViolationRow = {
   violation_type: string;
   break_type: string | null;
   timestamp: string;
+  created_at: string | null;
   expected_duration: number | null;
   actual_duration: number | null;
   excess_minutes: number | null;
@@ -122,6 +123,23 @@ function getBreakLimitMinutes(
   return normalized.includes("обед") ? lunchLimitMinutes : breakLimitMinutes;
 }
 
+function resolveViolationDisplayTs(v: ViolationRow, timeZone: string): string {
+  // Legacy compatibility:
+  // some older clients wrote local wall time as UTC ("...+00:00"), producing +3h in Moscow.
+  // If timestamp differs from created_at by ~3h, prefer created_at for display.
+  const violationMs = parseIsoToMs(v.timestamp);
+  const createdMs = parseIsoToMs(v.created_at);
+  const isMoscow = timeZone.trim().toLowerCase() === "europe/moscow";
+
+  if (isMoscow && violationMs !== null && createdMs !== null) {
+    const deltaMin = Math.round((violationMs - createdMs) / 60000);
+    if (deltaMin >= 150 && deltaMin <= 210) {
+      return v.created_at ?? v.timestamp;
+    }
+  }
+  return v.timestamp;
+}
+
 function buildViolationMessage(v: ViolationRow, timeZone: string): string {
   const violationNameMap: Record<string, string> = {
     OUT_OF_WINDOW: "Вне временного окна",
@@ -133,7 +151,7 @@ function buildViolationMessage(v: ViolationRow, timeZone: string): string {
 
   const t = String(v.violation_type ?? "").trim();
   const localizedType = violationNameMap[t] ?? (t || "Нарушение");
-  const when = formatLocalDateTime(v.timestamp, timeZone);
+  const when = formatLocalDateTime(resolveViolationDisplayTs(v, timeZone), timeZone);
   const who = (v.name || "").trim() || v.email || "Unknown";
   const breakType = normalizeBreakType(v.break_type);
   const details = String(v.details ?? "").trim();
@@ -304,6 +322,12 @@ Deno.serve(async (request: Request) => {
       1,
       90,
     );
+    const breakRepeatMinutes = parseBoundedInt(
+      Deno.env.get("TELEGRAM_BREAK_REPEAT_MINUTES"),
+      5,
+      1,
+      120,
+    );
     const breakMaxAgeHours = parseBoundedInt(
       Deno.env.get("TELEGRAM_BREAK_MAX_AGE_HOURS"),
       12,
@@ -366,7 +390,7 @@ Deno.serve(async (request: Request) => {
       const { data: rows, error: loadError } = await supabase
         .from("violations")
         .select(
-          "id,email,name,violation_type,break_type,timestamp,expected_duration,actual_duration,excess_minutes,details",
+          "id,email,name,violation_type,break_type,timestamp,created_at,expected_duration,actual_duration,excess_minutes,details",
         )
         .gte("timestamp", checkpointTs)
         .order("timestamp", { ascending: true })
@@ -479,7 +503,9 @@ Deno.serve(async (request: Request) => {
       if (durationMinutes <= limitMinutes) continue;
 
       const breakIdentity = row.id || `${row.email}:${row.start_time}`;
-      const eventKey = `break_over:${breakIdentity}`;
+      const overtimeMinutes = durationMinutes - limitMinutes;
+      const repeatBucket = Math.floor(Math.max(0, overtimeMinutes - 1) / breakRepeatMinutes);
+      const eventKey = `break_over:${breakIdentity}:bucket:${repeatBucket}`;
       if (await isEventSent(supabase, eventKey)) continue;
 
       const message = buildBreakWarningMessage(row, durationMinutes, limitMinutes, timeZone);
@@ -529,6 +555,7 @@ Deno.serve(async (request: Request) => {
       },
       break_scan: {
         window_hours: breakMaxAgeHours,
+        repeat_minutes: breakRepeatMinutes,
         active_session_emails: activeSessionEmails.size,
         candidates: (breakRows ?? []).length,
         skipped_inactive_session: skippedInactiveSession,
