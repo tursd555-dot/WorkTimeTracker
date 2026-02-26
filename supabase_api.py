@@ -19,15 +19,12 @@ except ImportError:
 
 __all__ = ["SupabaseAPI", "get_supabase_api"]
 
-_LOCAL_TZ = datetime.now().astimezone().tzinfo or timezone.utc
-
-
 def _to_utc_iso(value: Any, *, fallback_now: bool = False) -> Optional[str]:
     """
     Преобразует строку времени в UTC ISO-8601.
 
-    Важно: если вход без timezone (naive), трактуем как ЛОКАЛЬНОЕ время
-    машины и переводим в UTC. Это предотвращает смещение +3ч для Москвы.
+    Важно: если вход без timezone (naive), трактуем как UTC,
+    чтобы не вносить скрытые смещения из-за TZ окружения процесса.
     """
     raw = str(value or "").strip()
     if not raw:
@@ -55,7 +52,7 @@ def _to_utc_iso(value: Any, *, fallback_now: bool = False) -> Optional[str]:
         return datetime.now(timezone.utc).isoformat() if fallback_now else None
 
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=_LOCAL_TZ)
+        dt = dt.replace(tzinfo=timezone.utc)
 
     return dt.astimezone(timezone.utc).isoformat()
 
