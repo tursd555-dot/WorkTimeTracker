@@ -242,6 +242,14 @@ class MonitorBot:
                     
                     # Вычисляем длительность в московском времени
                     duration = (now - start_time_moscow).total_seconds() / 60  # в минутах
+
+                    # Защита от битых временных меток
+                    if duration < 0:
+                        logger.warning(
+                            f"Skipping break with negative duration: email={email}, type={break_type}, "
+                            f"start={start_time_str}, now={now.isoformat()}, duration={duration:.1f}min"
+                        )
+                        continue
                     
                     # Лимиты (из config.py)
                     limit_minutes = 15 if break_type == 'Перерыв' else 60  # Перерыв: 15 мин, Обед: 60 мин

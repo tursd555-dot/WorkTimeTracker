@@ -20,7 +20,7 @@
 from __future__ import annotations
 import logging
 from typing import List, Dict, Optional, Tuple
-from datetime import datetime, time, date
+from datetime import datetime, time, date, timezone
 from dataclasses import dataclass
 import sys
 from pathlib import Path
@@ -825,7 +825,7 @@ class BreakManager:
                 logger.warning(f"Quota exceeded for {email}, but allowing break (violation logged)")
             
             # 4. Проверить временное окно
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             current_time = now.time()
             in_window = False
             
@@ -888,30 +888,30 @@ class BreakManager:
                 return False, "Активный перерыв не найден", None
             
             # 2. Вычислить длительность
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             start_time_str = active.get("StartTime") or active.get("start_time") or ""
             
             # Поддерживаем разные форматы времени
             try:
                 if isinstance(start_time_str, str):
-                    # Убираем timezone если есть (для совместимости)
-                    start_time_clean = start_time_str.replace('Z', '').split('+')[0].split('.')[0]
-                    # Пробуем разные форматы
-                    try:
-                        start_time = datetime.strptime(start_time_clean, "%Y-%m-%d %H:%M:%S")
-                    except ValueError:
-                        try:
-                            start_time = datetime.strptime(start_time_clean, "%Y-%m-%dT%H:%M:%S")
-                        except ValueError:
-                            # Используем fromisoformat как fallback
-                            start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                    start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
                 else:
-                    start_time = datetime.fromisoformat(str(start_time_str))
+                    start_time = datetime.fromisoformat(str(start_time_str).replace('Z', '+00:00'))
+
+                # Старые записи могли храниться как naive; трактуем их как UTC
+                if start_time.tzinfo is None:
+                    start_time = start_time.replace(tzinfo=timezone.utc)
             except Exception as e:
                 logger.error(f"Failed to parse start_time: {start_time_str}, error: {e}")
                 return False, f"Ошибка парсинга времени начала перерыва", None
-            
-            duration = int((now - start_time).total_seconds() / 60)
+
+            duration = int((now - start_time.astimezone(timezone.utc)).total_seconds() / 60)
+            if duration < 0:
+                logger.warning(
+                    f"Negative break duration detected for {email} ({break_type}): "
+                    f"start_time={start_time_str}, now={now.isoformat()}, duration={duration}. Clamping to 0"
+                )
+                duration = 0
             limit = int(active.get("ExpectedDuration") or active.get("Duration") or "15")
             
             # 3. Обновить запись об окончании
