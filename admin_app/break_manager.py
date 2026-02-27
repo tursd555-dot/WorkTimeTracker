@@ -1206,41 +1206,81 @@ class BreakManager:
         try:
             # Проверяем, является ли это Supabase API
             if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
-                # Для Supabase используем прямой метод обновления
+                # Для Supabase используем прямой метод обновления.
+                # Дополнительно дублируем фильтрацию "end_time IS NULL" на стороне Python,
+                # чтобы быть устойчивыми к особенностям .is_() в supabase-py.
                 try:
                     from datetime import timezone
-                    # Находим активный перерыв по email и break_type без end_time
-                    response = self.sheets.client.table('break_log')\
-                        .select('id')\
-                        .eq('email', email.lower())\
-                        .eq('break_type', break_type)\
-                        .is_('end_time', 'null')\
-                        .order('start_time', desc=True)\
-                        .limit(1)\
-                        .execute()
-                    
-                    if response.data:
-                        break_id = response.data[0]['id']
-                        
-                        # Обновляем запись
-                        update_data = {
-                            'end_time': end_time.astimezone(timezone.utc).isoformat(),
-                            'duration_minutes': duration,
-                            'status': 'Completed'
-                        }
-                        
-                        self.sheets.client.table('break_log')\
-                            .update(update_data)\
-                            .eq('id', break_id)\
+
+                    try:
+                        # Основной путь: фильтрация по end_time IS NULL на стороне БД
+                        response = self.sheets.client.table('break_log')\
+                            .select('id, end_time, status, start_time')\
+                            .eq('email', email.lower())\
+                            .eq('break_type', break_type)\
+                            .is_('end_time', 'null')\
+                            .order('start_time', desc=True)\
+                            .limit(5)\
                             .execute()
-                        
-                        logger.info(f"✅ Updated break end in Supabase: {email}, {break_type}, duration={duration} min")
-                        return
-                    else:
+                        candidates = response.data if hasattr(response, "data") else []
+                    except Exception as query_error:
+                        logger.warning(
+                            "Primary Supabase query for active break failed, "
+                            "falling back to client-side filtering: %s",
+                            query_error,
+                        )
+                        # Fallback: забираем последние записи и фильтруем активные
+                        response = self.sheets.client.table('break_log')\
+                            .select('id, end_time, status, start_time, email, break_type')\
+                            .eq('email', email.lower())\
+                            .eq('break_type', break_type)\
+                            .order('start_time', desc=True)\
+                            .limit(20)\
+                            .execute()
+                        raw_rows = response.data if hasattr(response, "data") else []
+                        candidates = []
+                        for row in raw_rows:
+                            end_val = row.get("end_time")
+                            status_val = (row.get("status") or "").strip()
+                            has_end = end_val is not None and str(end_val).strip() != ""
+                            is_active_status = not status_val or status_val.lower() == "active"
+                            if not has_end and is_active_status:
+                                candidates.append(row)
+
+                    if not candidates:
                         logger.warning(f"No active break found to update: {email}, {break_type}")
                         return
+
+                    # Берём самый последний активный перерыв
+                    break_id = candidates[0]["id"]
+
+                    update_data = {
+                        "end_time": end_time.astimezone(timezone.utc).isoformat(),
+                        "duration_minutes": duration,
+                        "status": "Completed",
+                    }
+
+                    self.sheets.client.table("break_log")\
+                        .update(update_data)\
+                        .eq("id", break_id)\
+                        .execute()
+
+                    logger.info(
+                        "✅ Updated break end in Supabase: %s, %s, duration=%s min (break_id=%s)",
+                        email,
+                        break_type,
+                        duration,
+                        break_id,
+                    )
+                    return
                 except Exception as e:
-                    logger.error(f"Failed to update break end in Supabase: {e}", exc_info=True)
+                    logger.error(
+                        "Failed to update break end in Supabase for %s (%s): %s",
+                        email,
+                        break_type,
+                        e,
+                        exc_info=True,
+                    )
                     return
             
             # Старый код для Google Sheets

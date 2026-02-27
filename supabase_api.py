@@ -23,8 +23,10 @@ def _to_utc_iso(value: Any, *, fallback_now: bool = False) -> Optional[str]:
     """
     Преобразует строку времени в UTC ISO-8601.
 
-    Важно: если вход без timezone (naive), трактуем как UTC,
-    чтобы не вносить скрытые смещения из-за TZ окружения процесса.
+    Важно: если вход без timezone (naive), трактуем как локальное "рабочее"
+    время (Мск), а затем конвертируем в UTC. Это исправляет историческую
+    проблему, когда локальное московское время интерпретировалось как UTC
+    и давало сдвиг ~+3 часа в Supabase.
     """
     raw = str(value or "").strip()
     if not raw:
@@ -52,7 +54,13 @@ def _to_utc_iso(value: Any, *, fallback_now: bool = False) -> Optional[str]:
         return datetime.now(timezone.utc).isoformat() if fallback_now else None
 
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        # Предпочитаем московский часовой пояс, если доступен,
+        # иначе безопасный fallback на UTC.
+        try:
+            from shared.time_utils import MOSCOW_TZ
+            dt = dt.replace(tzinfo=MOSCOW_TZ)
+        except Exception:
+            dt = dt.replace(tzinfo=timezone.utc)
 
     return dt.astimezone(timezone.utc).isoformat()
 
