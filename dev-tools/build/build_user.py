@@ -30,20 +30,20 @@ def main():
         # Переходим в корень проекта
         os.chdir(str(project_root))
         
-        # Очистка
-        for dir_name in ['dist', 'build']:
-            if Path(dir_name).exists():
-                shutil.rmtree(dir_name)
-                logger.info(f"🧹 Очищена директория: {dir_name}")
+        # Очистка только build директории (dist очищается в build_all_windows.py)
+        build_dir = Path('build')
+        if build_dir.exists():
+            shutil.rmtree(build_dir)
+            logger.info(f"🧹 Очищена директория: {build_dir}")
 
         # Проверка существования файлов
         required_files = [
-            'secret_creds.zip',
             'config.py',
-            'auto_sync.py',
-            'sheets_api.py',
-            'user_app',
-            'sync'
+        ]
+        
+        # Опциональные файлы (предупреждение, но не ошибка)
+        optional_files = [
+            'secret_creds.zip',
         ]
         
         missing_files = []
@@ -53,7 +53,25 @@ def main():
                 missing_files.append(file)
         
         if missing_files:
-            logger.critical(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Отсутствуют файлы: {', '.join(missing_files)}")
+            logger.critical(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Отсутствуют необходимые файлы: {', '.join(missing_files)}")
+            sys.exit(1)
+        
+        # Проверка опциональных файлов (только предупреждение)
+        for file in optional_files:
+            file_path = project_root / file
+            if not file_path.exists():
+                logger.warning(f"⚠ Опциональный файл не найден: {file} (будет пропущен при сборке)")
+        
+        # Проверка директорий
+        required_dirs = ['user_app', 'sync']
+        missing_dirs = []
+        for dir_name in required_dirs:
+            dir_path = project_root / dir_name
+            if not dir_path.is_dir():
+                missing_dirs.append(dir_name)
+        
+        if missing_dirs:
+            logger.critical(f"❌ КРИТИЧЕСКАЯ ОШИБКА: Отсутствуют необходимые директории: {', '.join(missing_dirs)}")
             sys.exit(1)
 
         options = [
@@ -75,10 +93,18 @@ def main():
         
         # Добавляем данные
         data_files = [
-            ('secret_creds.zip', '.'),
             ('config.py', '.'),
+        ]
+        
+        # Опциональные файлы
+        optional_data_files = [
+            ('secret_creds.zip', '.'),
             ('auto_sync.py', '.'),
             ('sheets_api.py', '.'),
+        ]
+        
+        # Обязательные директории
+        data_dirs = [
             ('user_app', 'user_app'),
             ('sync', 'sync'),
         ]
@@ -88,36 +114,49 @@ def main():
             if src_path.exists():
                 options.extend(['--add-data', f'{src_path};{dst}'])
             else:
-                logger.warning(f"⚠ Файл/папка не найдена: {src_path}")
+                logger.warning(f"⚠ Файл не найден: {src_path}")
+        
+        for src, dst in optional_data_files:
+            src_path = project_root / src
+            if src_path.exists():
+                options.extend(['--add-data', f'{src_path};{dst}'])
+        
+        for src, dst in data_dirs:
+            src_path = project_root / src
+            if src_path.exists():
+                options.extend(['--add-data', f'{src_path};{dst}'])
+            else:
+                logger.warning(f"⚠ Директория не найдена: {src_path}")
         
         # Скрытые импорты
         hidden_imports = [
             'PyQt5',
-            'PyQt5.sip',
             'PyQt5.QtCore',
             'PyQt5.QtWidgets',
             'PyQt5.QtGui',
-            'gspread',
-            'oauth2client',
-            'google.auth',
-            'googleapiclient',
-            'google.oauth2',
-            'googleapiclient.discovery',
-            'httplib2',
-            'OpenSSL',
-            'requests',
             'user_app',
             'user_app.db_local',
             'user_app.gui',
             'user_app.login_window',
             'auto_sync',
-            'sheets_api',
+            'api_adapter',
             'supabase_api',
             'sync',
             'sync.notifications',
             'shared',
+            'shared.time_utils',
             'notifications',
             'notifications.engine',
+            # Google Sheets импорты (опционально, если не используется Supabase)
+            # 'gspread',
+            # 'oauth2client',
+            # 'google.auth',
+            # 'googleapiclient',
+            # 'google.oauth2',
+            # 'googleapiclient.discovery',
+            # 'httplib2',
+            # 'OpenSSL',
+            'requests',
         ]
         
         for imp in hidden_imports:

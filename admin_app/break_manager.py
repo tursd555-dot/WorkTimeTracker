@@ -20,7 +20,7 @@
 from __future__ import annotations
 import logging
 from typing import List, Dict, Optional, Tuple
-from datetime import datetime, time, date
+from datetime import datetime, time, date, timezone
 from dataclasses import dataclass
 import sys
 from pathlib import Path
@@ -331,16 +331,32 @@ class BreakManager:
             
             first = schedule_rows[0]
             
-            # Собираем лимиты (уникальные по типу)
+            # Собираем лимиты (считаем количество слотов каждого типа)
             limits_dict = {}
+            slot_counts = {}  # Счетчик слотов по типу
+            
+            # Сначала считаем количество слотов каждого типа
+            for row in schedule_rows:
+                break_type = row.get("SlotType", "")
+                if break_type:
+                    slot_counts[break_type] = slot_counts.get(break_type, 0) + 1
+            
+            # Создаем лимиты на основе количества слотов
             for row in schedule_rows:
                 break_type = row.get("SlotType", "")
                 if break_type and break_type not in limits_dict:
+                    # Используем количество слотов как daily_count
+                    daily_count = slot_counts.get(break_type, 3 if break_type == "Перерыв" else 1)
                     limits_dict[break_type] = BreakLimit(
                         break_type=break_type,
-                        daily_count=3 if break_type == "Перерыв" else 1,  # По умолчанию
+                        daily_count=daily_count,
                         time_minutes=int(row.get("Duration", "15"))
                     )
+            
+            logger.debug(
+                f"Schedule {schedule_id} limits: "
+                f"{[(lt.break_type, lt.daily_count) for lt in limits_dict.values()]}"
+            )
             
             # Собираем окна
             windows = []
@@ -771,7 +787,17 @@ class BreakManager:
             
             # 3. Проверить дневной лимит
             today_count = self._count_breaks_today(email, break_type)
-            quota_exceeded = today_count >= limit.daily_count
+            # today_count - это количество УЖЕ существующих перерывов до начала нового
+            # Новый перерыв будет (today_count + 1)-м
+            new_total_count = today_count + 1
+            quota_exceeded = new_total_count > limit.daily_count
+            
+            logger.info(
+                f"Quota check for {email} ({break_type}): "
+                f"existing={today_count}, new_total={new_total_count}, "
+                f"limit={limit.daily_count}, exceeded={quota_exceeded}"
+            )
+            
             if quota_exceeded:
                 # Превышение квоты - критическое нарушение
                 # НО разрешаем перерыв (не блокируем пользователя)
@@ -780,7 +806,7 @@ class BreakManager:
                     session_id=session_id,
                     violation_type=self.VIOLATION_QUOTA_EXCEEDED,
                     severity=self.SEVERITY_CRITICAL,
-                    details=f"Превышен дневной лимит {break_type}: {today_count+1}/{limit.daily_count}"
+                    details=f"Превышен дневной лимит {break_type}: {new_total_count}/{limit.daily_count}"
                 )
                 
                 # Отправить уведомление в группу (одно за нарушение)
@@ -789,7 +815,7 @@ class BreakManager:
                     send_quota_exceeded_notification(
                         email=email,
                         break_type=break_type,
-                        used_count=today_count + 1,
+                        used_count=new_total_count,  # Используем правильное количество
                         limit_count=limit.daily_count
                     )
                 except Exception as e:
@@ -799,7 +825,7 @@ class BreakManager:
                 logger.warning(f"Quota exceeded for {email}, but allowing break (violation logged)")
             
             # 4. Проверить временное окно
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             current_time = now.time()
             in_window = False
             
@@ -862,30 +888,30 @@ class BreakManager:
                 return False, "Активный перерыв не найден", None
             
             # 2. Вычислить длительность
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             start_time_str = active.get("StartTime") or active.get("start_time") or ""
             
             # Поддерживаем разные форматы времени
             try:
                 if isinstance(start_time_str, str):
-                    # Убираем timezone если есть (для совместимости)
-                    start_time_clean = start_time_str.replace('Z', '').split('+')[0].split('.')[0]
-                    # Пробуем разные форматы
-                    try:
-                        start_time = datetime.strptime(start_time_clean, "%Y-%m-%d %H:%M:%S")
-                    except ValueError:
-                        try:
-                            start_time = datetime.strptime(start_time_clean, "%Y-%m-%dT%H:%M:%S")
-                        except ValueError:
-                            # Используем fromisoformat как fallback
-                            start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+                    start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
                 else:
-                    start_time = datetime.fromisoformat(str(start_time_str))
+                    start_time = datetime.fromisoformat(str(start_time_str).replace('Z', '+00:00'))
+
+                # Старые записи могли храниться как naive; трактуем их как UTC
+                if start_time.tzinfo is None:
+                    start_time = start_time.replace(tzinfo=timezone.utc)
             except Exception as e:
                 logger.error(f"Failed to parse start_time: {start_time_str}, error: {e}")
                 return False, f"Ошибка парсинга времени начала перерыва", None
-            
-            duration = int((now - start_time).total_seconds() / 60)
+
+            duration = int((now - start_time.astimezone(timezone.utc)).total_seconds() / 60)
+            if duration < 0:
+                logger.warning(
+                    f"Negative break duration detected for {email} ({break_type}): "
+                    f"start_time={start_time_str}, now={now.isoformat()}, duration={duration}. Clamping to 0"
+                )
+                duration = 0
             limit = int(active.get("ExpectedDuration") or active.get("Duration") or "15")
             
             # 3. Обновить запись об окончании
@@ -1011,28 +1037,86 @@ class BreakManager:
     # =================== ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ===================
     
     def _count_breaks_today(self, email: str, break_type: str) -> int:
-        """Подсчитывает количество перерывов сегодня"""
+        """Подсчитывает количество перерывов сегодня (в московском времени)"""
         try:
-            ws = self.sheets.get_worksheet(self.USAGE_LOG_SHEET)
-            rows = self.sheets._read_table(ws)
-            
-            today = date.today().isoformat()
-            
-            count = 0
-            for row in rows:
-                row_email = row.get("Email") or row.get("email") or ""
-                row_break_type = row.get("BreakType") or row.get("break_type") or ""
-                start_time_str = row.get("StartTime") or row.get("start_time") or ""
+            # Проверяем, используем ли мы Supabase
+            if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
+                # Используем Supabase напрямую
+                # Важно: используем московское время для определения "сегодня"
+                from shared.time_utils import now_moscow, to_moscow
+                from datetime import timezone, timedelta
                 
-                if (row_email.lower() == email.lower() and
-                    row_break_type == break_type and
-                    start_time_str.startswith(today)):
-                    count += 1
-            
-            return count
+                moscow_now = now_moscow()
+                today = moscow_now.date()
+                
+                # Получаем все перерывы за сегодня для данного пользователя и типа
+                # Сначала получаем все перерывы пользователя за последние 2 дня (на случай перехода через UTC)
+                result = self.sheets.client.table('break_log').select(
+                    'id,email,break_type,start_time,end_time'
+                ).eq('email', email.lower()).eq('break_type', break_type).execute()
+                
+                breaks_data = result.data if hasattr(result, 'data') else []
+                
+                # Фильтруем перерывы по московской дате
+                count = 0
+                for entry in breaks_data:
+                    start_time_str = entry.get('start_time')
+                    if not start_time_str:
+                        continue
+                    
+                    # Конвертируем start_time в московское время
+                    start_time_moscow = to_moscow(start_time_str)
+                    if start_time_moscow and start_time_moscow.date() == today:
+                        count += 1
+                
+                # Логируем детали для отладки
+                logger.info(
+                    f"Counted breaks for {email} ({break_type}): {count} "
+                    f"(from Supabase break_log, date={today.isoformat()} Moscow time, "
+                    f"total entries checked: {len(breaks_data)})"
+                )
+                
+                # Детальное логирование первых нескольких перерывов
+                if breaks_data:
+                    logger.debug(f"Break entries found for {email} ({break_type}):")
+                    for i, entry in enumerate(breaks_data[:10], 1):
+                        start_time_str = entry.get('start_time')
+                        start_time_moscow = to_moscow(start_time_str) if start_time_str else None
+                        logger.debug(
+                            f"  {i}. id={entry.get('id')}, "
+                            f"start_time={start_time_str}, "
+                            f"start_time_moscow={start_time_moscow}, "
+                            f"date_match={start_time_moscow.date() == today if start_time_moscow else False}"
+                        )
+                
+                return count
+            else:
+                # Используем Google Sheets через совместимый интерфейс
+                ws = self.sheets.get_worksheet(self.USAGE_LOG_SHEET)
+                rows = self.sheets._read_table(ws)
+                
+                today = date.today().isoformat()
+                
+                count = 0
+                for row in rows:
+                    row_email = row.get("Email") or row.get("email") or ""
+                    row_break_type = row.get("BreakType") or row.get("break_type") or ""
+                    start_time_str = row.get("StartTime") or row.get("start_time") or ""
+                    
+                    if (row_email.lower() == email.lower() and
+                        row_break_type == break_type and
+                        start_time_str.startswith(today)):
+                        count += 1
+                
+                logger.debug(
+                    f"Counted breaks for {email} ({break_type}): {count} "
+                    f"(from Google Sheets {self.USAGE_LOG_SHEET}, date={today})"
+                )
+                
+                return count
             
         except Exception as e:
-            logger.error(f"Failed to count breaks: {e}")
+            logger.error(f"Failed to count breaks for {email} ({break_type}): {e}", exc_info=True)
             return 0
     
     def _get_active_break(self, email: str, break_type: str) -> Optional[Dict]:
@@ -1122,41 +1206,81 @@ class BreakManager:
         try:
             # Проверяем, является ли это Supabase API
             if hasattr(self.sheets, 'client') and hasattr(self.sheets.client, 'table'):
-                # Для Supabase используем прямой метод обновления
+                # Для Supabase используем прямой метод обновления.
+                # Дополнительно дублируем фильтрацию "end_time IS NULL" на стороне Python,
+                # чтобы быть устойчивыми к особенностям .is_() в supabase-py.
                 try:
                     from datetime import timezone
-                    # Находим активный перерыв по email и break_type без end_time
-                    response = self.sheets.client.table('break_log')\
-                        .select('id')\
-                        .eq('email', email.lower())\
-                        .eq('break_type', break_type)\
-                        .is_('end_time', 'null')\
-                        .order('start_time', desc=True)\
-                        .limit(1)\
-                        .execute()
-                    
-                    if response.data:
-                        break_id = response.data[0]['id']
-                        
-                        # Обновляем запись
-                        update_data = {
-                            'end_time': end_time.astimezone(timezone.utc).isoformat(),
-                            'duration_minutes': duration,
-                            'status': 'Completed'
-                        }
-                        
-                        self.sheets.client.table('break_log')\
-                            .update(update_data)\
-                            .eq('id', break_id)\
+
+                    try:
+                        # Основной путь: фильтрация по end_time IS NULL на стороне БД
+                        response = self.sheets.client.table('break_log')\
+                            .select('id, end_time, status, start_time')\
+                            .eq('email', email.lower())\
+                            .eq('break_type', break_type)\
+                            .is_('end_time', 'null')\
+                            .order('start_time', desc=True)\
+                            .limit(5)\
                             .execute()
-                        
-                        logger.info(f"✅ Updated break end in Supabase: {email}, {break_type}, duration={duration} min")
-                        return
-                    else:
+                        candidates = response.data if hasattr(response, "data") else []
+                    except Exception as query_error:
+                        logger.warning(
+                            "Primary Supabase query for active break failed, "
+                            "falling back to client-side filtering: %s",
+                            query_error,
+                        )
+                        # Fallback: забираем последние записи и фильтруем активные
+                        response = self.sheets.client.table('break_log')\
+                            .select('id, end_time, status, start_time, email, break_type')\
+                            .eq('email', email.lower())\
+                            .eq('break_type', break_type)\
+                            .order('start_time', desc=True)\
+                            .limit(20)\
+                            .execute()
+                        raw_rows = response.data if hasattr(response, "data") else []
+                        candidates = []
+                        for row in raw_rows:
+                            end_val = row.get("end_time")
+                            status_val = (row.get("status") or "").strip()
+                            has_end = end_val is not None and str(end_val).strip() != ""
+                            is_active_status = not status_val or status_val.lower() == "active"
+                            if not has_end and is_active_status:
+                                candidates.append(row)
+
+                    if not candidates:
                         logger.warning(f"No active break found to update: {email}, {break_type}")
                         return
+
+                    # Берём самый последний активный перерыв
+                    break_id = candidates[0]["id"]
+
+                    update_data = {
+                        "end_time": end_time.astimezone(timezone.utc).isoformat(),
+                        "duration_minutes": duration,
+                        "status": "Completed",
+                    }
+
+                    self.sheets.client.table("break_log")\
+                        .update(update_data)\
+                        .eq("id", break_id)\
+                        .execute()
+
+                    logger.info(
+                        "✅ Updated break end in Supabase: %s, %s, duration=%s min (break_id=%s)",
+                        email,
+                        break_type,
+                        duration,
+                        break_id,
+                    )
+                    return
                 except Exception as e:
-                    logger.error(f"Failed to update break end in Supabase: {e}", exc_info=True)
+                    logger.error(
+                        "Failed to update break end in Supabase for %s (%s): %s",
+                        email,
+                        break_type,
+                        e,
+                        exc_info=True,
+                    )
                     return
             
             # Старый код для Google Sheets

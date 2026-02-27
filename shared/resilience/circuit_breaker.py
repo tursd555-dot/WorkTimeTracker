@@ -42,6 +42,18 @@ from datetime import datetime, timedelta
 from typing import Optional, Callable, Any
 from functools import wraps
 
+# Импорт для работы с московским временем
+try:
+    from shared.time_utils import format_time_moscow
+except ImportError:
+    # Фолбэк если модуль недоступен
+    def format_time_moscow(dt, format_str='%H:%M:%S'):
+        if dt is None:
+            dt = datetime.now()
+        if isinstance(dt, str):
+            dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
+        return dt.strftime(format_str)
+
 logger = logging.getLogger(__name__)
 
 
@@ -376,14 +388,14 @@ class CircuitBreaker:
                     f"State: OPEN (service unavailable)\n"
                     f"Failures: {self.failure_count}\n"
                     f"Recovery timeout: {self.recovery_timeout}s\n"
-                    f"Time: {datetime.now().strftime('%H:%M:%S')}"
+                    f"Time: {format_time_moscow(datetime.now(), '%H:%M:%S')}"
                 )
             elif new_state == "CLOSED":
                 message = (
                     f"✅ CIRCUIT BREAKER RECOVERED\n\n"
                     f"Service: {self.name}\n"
                     f"State: CLOSED (service restored)\n"
-                    f"Time: {datetime.now().strftime('%H:%M:%S')}"
+                    f"Time: {format_time_moscow(datetime.now(), '%H:%M:%S')}"
                 )
             else:
                 return

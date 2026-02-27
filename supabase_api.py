@@ -19,6 +19,51 @@ except ImportError:
 
 __all__ = ["SupabaseAPI", "get_supabase_api"]
 
+def _to_utc_iso(value: Any, *, fallback_now: bool = False) -> Optional[str]:
+    """
+    Преобразует строку времени в UTC ISO-8601.
+
+    Важно: если вход без timezone (naive), трактуем как локальное "рабочее"
+    время (Мск), а затем конвертируем в UTC. Это исправляет историческую
+    проблему, когда локальное московское время интерпретировалось как UTC
+    и давало сдвиг ~+3 часа в Supabase.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return datetime.now(timezone.utc).isoformat() if fallback_now else None
+
+    dt: Optional[datetime] = None
+
+    # 1) ISO/почти ISO
+    normalized = raw.replace("Z", "+00:00") if raw.endswith("Z") else raw
+    try:
+        dt = datetime.fromisoformat(normalized)
+    except ValueError:
+        dt = None
+
+    # 2) Явные форматы "YYYY-MM-DD HH:MM[:SS]" / "YYYY-MM-DD"
+    if dt is None:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                dt = datetime.strptime(raw, fmt)
+                break
+            except ValueError:
+                continue
+
+    if dt is None:
+        return datetime.now(timezone.utc).isoformat() if fallback_now else None
+
+    if dt.tzinfo is None:
+        # Предпочитаем московский часовой пояс, если доступен,
+        # иначе безопасный fallback на UTC.
+        try:
+            from shared.time_utils import MOSCOW_TZ
+            dt = dt.replace(tzinfo=MOSCOW_TZ)
+        except Exception:
+            dt = dt.replace(tzinfo=timezone.utc)
+
+    return dt.astimezone(timezone.utc).isoformat()
+
 
 @dataclass
 class SupabaseConfig:
@@ -482,7 +527,6 @@ class SupabaseAPI:
                 # Формат из break_manager._log_break_start: Email, Name, BreakType, StartTime, EndTime, Duration, Date, Status
                 if len(values) >= 8:
                     try:
-                        from datetime import datetime
                         email_val = str(values[0]).lower() if values[0] else None
                         name_val = str(values[1]) if len(values) > 1 and values[1] else None
                         break_type_val = str(values[2]) if len(values) > 2 and values[2] else None
@@ -496,35 +540,16 @@ class SupabaseAPI:
                             logger.error(f"Missing required fields for break_log: email={email_val}, break_type={break_type_val}, start_time={start_time_str}")
                             return False
                         
-                        # Преобразуем start_time в ISO формат с timezone
-                        try:
-                            # Пробуем разные форматы времени
-                            if 'T' in start_time_str or '+' in start_time_str or start_time_str.endswith('Z'):
-                                # Уже в ISO формате
-                                start_time_iso = start_time_str
-                            else:
-                                # Формат "YYYY-MM-DD HH:MM:SS" -> преобразуем в ISO
-                                dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
-                                start_time_iso = dt.isoformat() + "Z"
-                        except ValueError:
-                            try:
-                                dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M")
-                                start_time_iso = dt.isoformat() + "Z"
-                            except ValueError:
-                                logger.error(f"Invalid start_time format: {start_time_str}")
-                                return False
+                        # Приводим время к UTC ISO. Наивные значения считаем локальными.
+                        start_time_iso = _to_utc_iso(start_time_str)
+                        if not start_time_iso:
+                            logger.error(f"Invalid start_time format: {start_time_str}")
+                            return False
                         
                         # Преобразуем end_time если есть (НЕ добавляем если пусто!)
                         end_time_iso = None
                         if end_time_str and end_time_str.strip() and end_time_str.strip() != "":
-                            try:
-                                if 'T' in end_time_str or '+' in end_time_str or end_time_str.endswith('Z'):
-                                    end_time_iso = end_time_str
-                                else:
-                                    dt = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M:%S")
-                                    end_time_iso = dt.isoformat() + "Z"
-                            except ValueError:
-                                pass
+                            end_time_iso = _to_utc_iso(end_time_str)
                         
                         # Преобразуем duration (НЕ добавляем если пусто!)
                         duration_minutes = None
@@ -581,18 +606,8 @@ class SupabaseAPI:
                         logger.error(f"Missing required fields for violation: email={email_val}, violation_type={violation_type}")
                         return False
                     
-                    # Преобразуем timestamp в формат ISO, если нужно
-                    if timestamp:
-                        if len(timestamp) == 19:  # Формат "YYYY-MM-DD HH:MM:SS"
-                            timestamp_iso = timestamp.replace(" ", "T") + "+00:00"
-                        elif len(timestamp) == 10:  # Формат "YYYY-MM-DD"
-                            timestamp_iso = timestamp + "T00:00:00+00:00"
-                        else:
-                            timestamp_iso = timestamp
-                    else:
-                        # Если timestamp не указан, используем текущее время
-                        from datetime import datetime
-                        timestamp_iso = datetime.now().isoformat() + "+00:00"
+                    # Приводим timestamp к UTC ISO. Наивные значения считаем локальными.
+                    timestamp_iso = _to_utc_iso(timestamp, fallback_now=True)
                     
                     # Извлекаем дату из timestamp
                     violation_date = timestamp_iso[:10] if timestamp_iso else datetime.now().date().isoformat()
@@ -1500,24 +1515,24 @@ class SupabaseAPI:
         """
         try:
             email_lower = (email or "").strip().lower()
-            response = self.client.table('users')\
-                .select('*')\
-                .eq('email', email_lower)\
-                .execute()
-            
-            if response.data:
-                row = response.data[0]
-                # Возвращаем в формате, совместимом с sheets_api.py
+            if not email_lower:
+                return None
+
+            def _norm(v: Any) -> str:
+                return str(v or "").strip().lower()
+
+            def _to_user_payload(row: Dict[str, Any]) -> Dict[str, str]:
+                normalized_email = _norm(row.get('email')) or email_lower
                 return {
                     # Ключи в нижнем регистре для совместимости с login_window.py
-                    'email': email_lower,
+                    'email': normalized_email,
                     'name': row.get('name', ''),
                     'role': row.get('role', 'специалист'),
                     'shift_hours': row.get('shift_hours', '8 часов'),
                     'telegram_login': row.get('telegram_id', ''),
                     'group': row.get('group_name', ''),
                     # Также возвращаем в формате с заглавными буквами для совместимости
-                    'Email': email_lower,
+                    'Email': normalized_email,
                     'Name': row.get('name', ''),
                     'Phone': row.get('phone', ''),
                     'Role': row.get('role', 'специалист'),
@@ -1526,6 +1541,41 @@ class SupabaseAPI:
                     'ShiftHours': row.get('shift_hours', '8 часов'),
                     'NotifyTelegram': 'Yes' if row.get('notify_telegram') else 'No'
                 }
+
+            # 1) Быстрый точный поиск
+            response = self.client.table('users')\
+                .select('*')\
+                .eq('email', email_lower)\
+                .limit(1)\
+                .execute()
+            if response.data:
+                return _to_user_payload(response.data[0])
+
+            # 2) Case-insensitive exact
+            response = self.client.table('users')\
+                .select('*')\
+                .ilike('email', email_lower)\
+                .limit(10)\
+                .execute()
+            candidates = response.data or []
+
+            # 3) Fallback for dirty data (spaces/extra chars in email column)
+            if not candidates:
+                response = self.client.table('users')\
+                    .select('*')\
+                    .ilike('email', f"%{email_lower}%")\
+                    .limit(50)\
+                    .execute()
+                candidates = response.data or []
+
+            if candidates:
+                exact = [r for r in candidates if _norm(r.get('email')) == email_lower]
+                pool = exact or candidates
+                # Предпочитаем активного пользователя, если поле есть
+                active = [r for r in pool if r.get('is_active') is True]
+                chosen = active[0] if active else pool[0]
+                return _to_user_payload(chosen)
+
             return None
             
         except Exception as e:
@@ -1618,6 +1668,16 @@ class SupabaseAPI:
             # Поле user_group отсутствует в схеме work_log, поэтому не добавляем его
             records = []
             for action in actions:
+                comment_text = (action.get('comment') or "").strip()
+                details_text = (action.get('details') or "").strip()
+                reason_text = (action.get('reason') or "").strip()
+
+                # В work_log нет отдельной колонки comment, поэтому сохраняем
+                # комментарий пользователя в details (с fallback на details/reason).
+                details_payload = comment_text or details_text
+                if reason_text:
+                    details_payload = f"{details_payload} | reason: {reason_text}" if details_payload else f"reason: {reason_text}"
+
                 record = {
                     'user_id': user_id,
                     'email': email.lower(),
@@ -1625,7 +1685,8 @@ class SupabaseAPI:
                     'timestamp': action.get('timestamp') or datetime.now(timezone.utc).isoformat(),
                     'action_type': action.get('action_type', ''),
                     'status': action.get('status', ''),
-                    'session_id': action.get('session_id', '')
+                    'session_id': action.get('session_id', ''),
+                    'details': details_payload
                 }
                 # Удаляем пустые значения
                 record = {k: v for k, v in record.items() if v is not None and v != ''}
@@ -1637,12 +1698,12 @@ class SupabaseAPI:
                 logger.info(f"Logged {len(records)} actions for {email}")
                 return True
             except Exception as insert_error:
-                # Ошибки сокета в Windows (WinError 10035) не критичны для работы приложения
+                # Ошибки сети должны оставлять записи в очереди (return False),
+                # чтобы auto_sync повторил отправку после восстановления связи.
                 error_str = str(insert_error)
                 if '10035' in error_str or 'socket' in error_str.lower() or 'ReadError' in str(type(insert_error).__name__):
-                    logger.warning(f"Socket error while logging actions for {email} (non-critical): {insert_error}")
-                    # Возвращаем True, чтобы не блокировать основную функциональность
-                    return True
+                    logger.warning(f"Socket/network error while logging actions for {email}: {insert_error}")
+                    return False
                 else:
                     # Другие ошибки - пробрасываем дальше
                     raise

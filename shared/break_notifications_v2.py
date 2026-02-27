@@ -18,7 +18,7 @@ from collections import defaultdict
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from shared.time_utils import format_datetime_moscow
+from shared.time_utils import format_datetime_moscow, now_moscow
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +31,18 @@ _group_notifications_sent: Dict[str, Dict[str, bool]] = defaultdict(dict)
 
 
 def check_internet_available() -> bool:
-    """Быстрая проверка доступности интернета"""
+    """Быстрая проверка доступности Telegram API (а не Google Sheets)."""
+    import socket
+    old_timeout = socket.getdefaulttimeout()
     try:
-        import socket
-        socket.setdefaulttimeout(0.5)
-        addr_info = socket.getaddrinfo('sheets.googleapis.com', 443, socket.AF_INET, socket.SOCK_STREAM)
-        socket.setdefaulttimeout(None)
+        socket.setdefaulttimeout(1.0)
+        # Для Telegram-уведомлений важна доступность api.telegram.org.
+        addr_info = socket.getaddrinfo('api.telegram.org', 443, socket.AF_UNSPEC, socket.SOCK_STREAM)
         return bool(addr_info)
     except Exception:
-        socket.setdefaulttimeout(None)
         return False
+    finally:
+        socket.setdefaulttimeout(old_timeout)
 
 
 def async_notification(func):
@@ -76,13 +78,13 @@ def _should_send_user_notification(email: str, break_type: str) -> bool:
         
         if last_sent is None:
             # Первое уведомление
-            _user_notification_times[email][break_type] = datetime.now()
+            _user_notification_times[email][break_type] = now_moscow()
             return True
         
         # Проверяем, прошло ли 5 минут
-        time_since_last = datetime.now() - last_sent
+        time_since_last = now_moscow() - last_sent
         if time_since_last >= timedelta(minutes=5):
-            _user_notification_times[email][break_type] = datetime.now()
+            _user_notification_times[email][break_type] = now_moscow()
             return True
         
         return False
@@ -163,8 +165,8 @@ def send_overtime_notification(
         if BREAK_NOTIFY_ADMIN_ON_VIOLATION and overtime >= 1:
             violation_key = f"overtime_{break_type}_{limit}"
             if _should_send_group_notification(email, violation_key):
-                from shared.time_utils import format_time_moscow
-                current_time = format_time_moscow(datetime.now(), '%H:%M:%S')
+                from shared.time_utils import format_time_moscow, now_moscow
+                current_time = format_time_moscow(now_moscow(), '%H:%M:%S')
                 admin_message = (
                     f"⚠️ НАРУШЕНИЕ ЛИМИТА\n"
                     f"\n"
@@ -221,8 +223,8 @@ def send_out_of_window_notification(
             logger.debug(f"Group notification already sent for {email} ({violation_key})")
             return False
         
-        from shared.time_utils import format_time_moscow
-        moscow_time = format_time_moscow(datetime.now(), '%H:%M:%S')
+        from shared.time_utils import format_time_moscow, now_moscow
+        moscow_time = format_time_moscow(now_moscow(), '%H:%M:%S')
         admin_message = (
             f"⚠️ ПЕРЕРЫВ ВНЕ ВРЕМЕННОГО ОКНА\n"
             f"\n"
@@ -277,8 +279,8 @@ def send_quota_exceeded_notification(
             logger.debug(f"Group notification already sent for {email} ({violation_key})")
             return False
         
-        from shared.time_utils import format_time_moscow
-        moscow_time = format_time_moscow(datetime.now(), '%H:%M:%S')
+        from shared.time_utils import format_time_moscow, now_moscow
+        moscow_time = format_time_moscow(now_moscow(), '%H:%M:%S')
         admin_message = (
             f"🚫 ПРЕВЫШЕН ДНЕВНОЙ ЛИМИТ\n"
             f"\n"

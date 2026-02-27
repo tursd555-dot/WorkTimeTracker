@@ -1,4 +1,4 @@
-﻿__pycache__/
+__pycache__/
 *.pyc
 temp_credentials.json
 *.json
@@ -8,3 +8,9 @@ temp_credentials.json
 *.OLD
 *.bak
 backup_*.json
+
+# Локальные базы данных
+*.db
+*.db-shm
+*.db-wal
+local_backup.db*

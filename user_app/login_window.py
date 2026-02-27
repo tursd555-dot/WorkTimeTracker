@@ -189,11 +189,20 @@ class LoginWindow(QDialog):
                 logger.info("LoginWindow: пользователь найден, продолжаем")
                 
                 # Проверяем наличие активной сессии
-                active_session = self.sheets_api.get_active_session(email)
+                try:
+                    active_session = self.sheets_api.get_active_session(email)
+                except Exception as session_err:
+                    logger.warning(f"LoginWindow: не удалось получить active_session для {email}: {session_err}")
+                    active_session = None
+
                 if active_session:
-                    session_id = active_session.get("SessionID")
-                    logout_time = QDateTime.currentDateTime().toString(Qt.ISODate)
-                    self.sheets_api.finish_active_session(email, session_id, logout_time)
+                    try:
+                        session_id = active_session.get("SessionID")
+                        logout_time = QDateTime.currentDateTime().toString(Qt.ISODate)
+                        self.sheets_api.finish_active_session(email, session_id, logout_time)
+                    except Exception as finish_err:
+                        # Старую сессию не удалось завершить — не блокируем вход пользователя.
+                        logger.warning(f"LoginWindow: не удалось завершить старую сессию для {email}: {finish_err}")
                 
                 session_id = f"{email[:8]}_{QDateTime.currentDateTime().toString('yyyyMMddHHmmss')}"
                 login_was_performed = True

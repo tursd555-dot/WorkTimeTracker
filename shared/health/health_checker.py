@@ -42,6 +42,18 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 
+# Импорт для работы с московским временем
+try:
+    from shared.time_utils import format_datetime_moscow
+except ImportError:
+    # Фолбэк если модуль недоступен
+    def format_datetime_moscow(dt, format_str='%Y-%m-%d %H:%M:%S'):
+        if dt is None:
+            dt = datetime.now()
+        if isinstance(dt, str):
+            dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
+        return dt.strftime(format_str)
+
 logger = logging.getLogger(__name__)
 
 
@@ -415,7 +427,7 @@ class HealthChecker:
             f"Status: UNHEALTHY\n"
             f"Message: {message}\n"
             f"Consecutive failures: {failures}\n"
-            f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            f"Time: {format_datetime_moscow(datetime.now(), '%Y-%m-%d %H:%M:%S')}"
         )
         
         # Используем callback если есть

@@ -19,9 +19,10 @@ import sys
 import logging
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 # Настройка логирования
 logging.basicConfig(
@@ -49,6 +50,86 @@ BUILD_BOT = PROJECT_ROOT / "dev-tools" / "build" / "build_bot.py"
 APP_ADMIN = "WorkTimeTracker_Admin"
 APP_USER = "WorkTimeTracker_User"
 APP_BOT = "WorkTimeTracker_Bot"
+BUILD_ARTIFACT_PATHS: Dict[str, Path] = {}
+
+
+def _add_python_runtime_binaries(options: List[str], logger_obj: logging.Logger) -> None:
+    """
+    Добавляет критичные runtime DLL в сборку Windows.
+    Это снижает риск ошибок вида:
+    "Failed to load Python DLL ... LoadLibrary: The specified module could not be found".
+    """
+    if os.name != "nt":
+        return
+
+    py_ver = f"python{sys.version_info.major}{sys.version_info.minor}.dll"
+    wanted_names = {
+        py_ver,
+        "python3.dll",
+        "vcruntime140.dll",
+        "vcruntime140_1.dll",
+        "msvcp140.dll",
+    }
+
+    search_dirs = [
+        Path(sys.executable).resolve().parent,   # venv\Scripts
+        Path(sys.base_prefix),                   # base python dir
+        Path(sys.base_prefix) / "DLLs",          # base python DLLs
+    ]
+
+    added: set[str] = set()
+    for d in search_dirs:
+        if not d.exists():
+            continue
+        for name in wanted_names:
+            p = (d / name).resolve()
+            if p.exists() and str(p) not in added:
+                options.extend(["--add-binary", f"{p};."])
+                added.add(str(p))
+
+    if added:
+        logger_obj.info("✓ Added Windows runtime binaries: %s", ", ".join(sorted(Path(x).name for x in added)))
+    else:
+        logger_obj.warning("⚠ Windows runtime DLLs were not found explicitly; target PC may require VC++ runtime")
+
+
+def _safe_rmtree(path: Path, retries: int = 6, base_delay_sec: float = 0.8) -> bool:
+    """
+    Удаляет директорию с ретраями (актуально для WinError 5/locked files на Windows).
+    """
+    if not path.exists():
+        return True
+
+    for attempt in range(1, retries + 1):
+        try:
+            shutil.rmtree(path)
+            return True
+        except Exception as e:
+            if attempt >= retries:
+                logger.warning("⚠ Не удалось удалить %s после %d попыток: %s", path, retries, e)
+                return False
+            sleep_s = base_delay_sec * attempt
+            logger.warning("⚠ Попытка %d/%d удалить %s не удалась: %s. Повтор через %.1fs",
+                           attempt, retries, path, e, sleep_s)
+            time.sleep(sleep_s)
+    return False
+
+
+def _kill_stale_bot_processes() -> None:
+    """
+    Пытается завершить старый процесс бота перед сборкой, чтобы снять lock с dist.
+    """
+    if os.name != "nt":
+        return
+    try:
+        subprocess.run(
+            ["taskkill", "/F", "/IM", f"{APP_BOT}.exe"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        pass
 
 
 def check_requirements() -> bool:
@@ -59,6 +140,13 @@ def check_requirements() -> bool:
     try:
         import PyInstaller
         logger.info(f"✓ PyInstaller {PyInstaller.__version__}")
+        if sys.version_info >= (3, 14):
+            logger.warning(
+                "⚠ Сборка выполняется на Python %d.%d. "
+                "Для максимальной совместимости рекомендуем Python 3.12.",
+                sys.version_info.major,
+                sys.version_info.minor,
+            )
     except ImportError:
         logger.error("❌ PyInstaller не установлен! Установите: pip install pyinstaller")
         return False
@@ -66,6 +154,10 @@ def check_requirements() -> bool:
     # Проверка необходимых файлов
     required_files = [
         "config.py",
+    ]
+    
+    # Опциональные файлы (предупреждение, но не ошибка)
+    optional_files = [
         "secret_creds.zip",
     ]
     
@@ -77,6 +169,11 @@ def check_requirements() -> bool:
     if missing_files:
         logger.error(f"❌ Отсутствуют необходимые файлы: {', '.join(missing_files)}")
         return False
+    
+    # Проверка опциональных файлов (только предупреждение)
+    for file_path in optional_files:
+        if not (PROJECT_ROOT / file_path).exists():
+            logger.warning(f"⚠ Опциональный файл не найден: {file_path} (будет пропущен при сборке)")
     
     # Проверка директорий
     required_dirs = [
@@ -107,7 +204,8 @@ def clean_build_dirs():
     for dir_path in [DIST_DIR, BUILD_DIR]:
         if dir_path.exists():
             try:
-                shutil.rmtree(dir_path)
+                if not _safe_rmtree(dir_path):
+                    raise PermissionError(f"Не удалось удалить {dir_path}")
                 logger.info(f"  ✓ Удалена: {dir_path}")
             except Exception as e:
                 logger.warning(f"  ⚠ Не удалось удалить {dir_path}: {e}")
@@ -129,6 +227,7 @@ def build_admin() -> bool:
         exe_path = DIST_DIR / APP_ADMIN / f"{APP_ADMIN}.exe"
         if exe_path.exists():
             logger.info(f"✅ Админка собрана: {exe_path}")
+            BUILD_ARTIFACT_PATHS["admin"] = exe_path.parent
             return True
         else:
             logger.error(f"❌ EXE файл не найден: {exe_path}")
@@ -155,6 +254,7 @@ def build_user() -> bool:
         exe_path = DIST_DIR / APP_USER / f"{APP_USER}.exe"
         if exe_path.exists():
             logger.info(f"✅ Пользовательское приложение собрано: {exe_path}")
+            BUILD_ARTIFACT_PATHS["user"] = exe_path.parent
             return True
         else:
             logger.error(f"❌ EXE файл не найден: {exe_path}")
@@ -177,6 +277,22 @@ def build_bot() -> bool:
         
         main_script = PROJECT_ROOT / "bot_launcher.py"
         icon_file = PROJECT_ROOT / "user_app" / "sberhealf.ico"
+        dist_root = DIST_DIR
+
+        # Перед сборкой пытаемся снять lock со старого output.
+        _kill_stale_bot_processes()
+        target_bot_dir = DIST_DIR / APP_BOT
+        if target_bot_dir.exists() and not _safe_rmtree(target_bot_dir):
+            # Если lock не снялся — собираем во временный dist-путь, чтобы сборка не падала.
+            fallback_dist = PROJECT_ROOT / "dist_fallback"
+            fallback_target = fallback_dist / APP_BOT
+            _safe_rmtree(fallback_target)
+            dist_root = fallback_dist
+            logger.warning(
+                "⚠ Выходной каталог %s заблокирован. Используем fallback path: %s",
+                target_bot_dir,
+                dist_root,
+            )
         
         options = [
             str(main_script),
@@ -188,12 +304,17 @@ def build_bot() -> bool:
             '--log-level=WARN',
             '--paths=.',
         ]
+        if dist_root != DIST_DIR:
+            options.extend(['--distpath', str(dist_root)])
         
         # Добавляем иконку, если существует
         if icon_file.exists():
             options.append(f'--icon={icon_file}')
         else:
             logger.warning(f"⚠ Иконка не найдена: {icon_file}")
+
+        # Добавляем runtime DLL для переносимости на "чистые" Windows-машины
+        _add_python_runtime_binaries(options, logger)
         
         # Добавляем данные
         data_files = [
@@ -224,9 +345,10 @@ def build_bot() -> bool:
         logger.info(f"⚙️ Запуск PyInstaller с опциями: {' '.join(options)}")
         run(options)
         
-        exe_path = DIST_DIR / APP_BOT / f"{APP_BOT}.exe"
+        exe_path = dist_root / APP_BOT / f"{APP_BOT}.exe"
         if exe_path.exists():
             logger.info(f"✅ Бот собран: {exe_path}")
+            BUILD_ARTIFACT_PATHS["bot"] = exe_path.parent
             return True
         else:
             logger.error(f"❌ EXE файл не найден: {exe_path}")
@@ -257,14 +379,14 @@ def create_release_package() -> Optional[Path]:
         
         # Копируем собранные приложения
         apps_to_copy = [
-            (APP_ADMIN, "Админка"),
-            (APP_USER, "Пользовательское приложение"),
-            (APP_BOT, "Telegram бот"),
+            ("admin", APP_ADMIN, "Админка"),
+            ("user", APP_USER, "Пользовательское приложение"),
+            ("bot", APP_BOT, "Telegram бот"),
         ]
         
         copied_apps = []
-        for app_name, description in apps_to_copy:
-            app_dir = DIST_DIR / app_name
+        for key, app_name, description in apps_to_copy:
+            app_dir = BUILD_ARTIFACT_PATHS.get(key, DIST_DIR / app_name)
             if app_dir.exists():
                 dest_dir = release_path / app_name
                 shutil.copytree(app_dir, dest_dir)
